@@ -1,4 +1,4 @@
-import workbench_blueprint
+import src.workbench_blueprint as workbench_blueprint
 
 def get_item_lookup():
     """Flattens SMART_SCHEMA and CONFIG_SCHEMA into a fast dictionary lookup."""

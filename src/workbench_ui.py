@@ -3,10 +3,10 @@ import os
 import subprocess
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib
-import config_manager
-import rules_engine
-import log_formatter
-import workbench_blueprint as blueprint
+import src.config_manager as config_manager
+import src.rules_engine as rules_engine
+import src.log_formatter as log_formatter
+import src.workbench_blueprint as blueprint
 
 class LiveOutputPanel:
     """Manages the nested profile logs with advanced UI controls."""

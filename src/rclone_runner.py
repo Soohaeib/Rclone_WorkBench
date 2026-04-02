@@ -1,7 +1,7 @@
 import subprocess
 import os
 import signal
-import workbench_blueprint
+import src.workbench_blueprint as workbench_blueprint
 
 def run_sync_session(profile: str, args: list):
     """Executes rclone, forces JSON/INFO logging, and writes to log file in real-time."""

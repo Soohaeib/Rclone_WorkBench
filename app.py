@@ -11,11 +11,11 @@ gi.require_version('AppIndicator3', '0.1')
 gi.require_version('Notify', '0.7')
 from gi.repository import Gtk, AppIndicator3, Notify, GLib
 
-import workbench_blueprint
-import config_manager
-import workbench_ui
-import rclone_runner
-import log_formatter
+import src.workbench_blueprint as workbench_blueprint
+import src.config_manager as config_manager
+import src.workbench_ui as workbench_ui
+import src.rclone_runner as rclone_runner
+import src.log_formatter as log_formatter
 
 Notify.init("RClone Tray")
 

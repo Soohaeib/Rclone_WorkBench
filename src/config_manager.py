@@ -1,6 +1,6 @@
 import os
 import json
-from workbench_blueprint import APP_DIR, JSON_CONFIG_FILE, CONFIG_SCHEMA
+from src.workbench_blueprint import APP_DIR, JSON_CONFIG_FILE, CONFIG_SCHEMA
 
 def load_config():
     """Loads the central JSON configuration file."""

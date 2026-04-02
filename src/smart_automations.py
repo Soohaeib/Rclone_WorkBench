@@ -1,6 +1,6 @@
 # smart_automations.py
 import os, glob
-from workbench_blueprint import SMART_SCHEMA
+from src.workbench_blueprint import SMART_SCHEMA
 
 def scan_environment(profile, local_path):
     """Recommends presets based on the file system state."""

@@ -1,6 +1,6 @@
 # smart_logic_hooks.py
 import os
-import workbench_blueprint as blueprint
+import src.workbench_blueprint as blueprint
 
 def setup_trash_bins(profile, local_path, live_state):
     """Triggered by preset_safe_trash to ensure directories and filters exist."""
