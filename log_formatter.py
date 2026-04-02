@@ -1,36 +1,69 @@
+import os
 import json
+import time
+import threading
 import re
+import workbench_blueprint
 
-# Standard Rclone ANSI escape sequences
+# Standard Rclone ANSI escape sequences to clean terminal colors
 ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+_active_tails = {}
 
 def format_line(line: str):
-    """
-    Translates a single JSONL line into a list of (action_type, data) tuples.
-    Actions: 'log' (message string), 'stats' (progress dict), 'error' (critical)
-    """
-    line = line.strip()
-    if not line: return []
+    """Parses raw JSONL string into UI-friendly actions."""
+    stripped = line.strip()
+    if not stripped: return []
 
     try:
-        data = json.loads(line)
-        
-        # Handle Rclone Stats objects
-        if "stats" in data or "transferred" in data:
+        data = json.loads(stripped)
+        if "stats" in data or "transferred" in data: 
             return [("stats", data)]
         
-        # Clean the message
         msg = ANSI_ESCAPE.sub('', data.get("msg", "")).strip()
         if not msg: return []
 
-        level = str(data.get("level", "info")).upper()
         obj = data.get("object", "")
-        formatted_msg = f"[{level}] {f'{obj}: ' if obj else ''}{msg}\n"
+        if obj and obj not in msg: msg = f"{msg}: {obj}"
         
-        return [("log", formatted_msg)]
-
+        level = str(data.get("level", "INFO")).upper()
+        return [("log", f"[{level}] {msg}\n")]
+        
     except json.JSONDecodeError:
-        # Fallback for non-JSON lines (e.g. startup errors)
-        clean = ANSI_ESCAPE.sub('', line).strip()
+        clean = ANSI_ESCAPE.sub('', stripped).strip()
         if not clean: return []
-        return [("log", f"{clean}\n")]
+        if " / " in clean and ("ETA" in clean or "%" in clean): 
+            return [("stats", {"msg": clean})]
+        return [("log", clean + "\n")]
+
+def start_live_feed(profile: str, ui_callback):
+    """Tails the log file and streams updates to the UI safely."""
+    stop_event = threading.Event()
+    _active_tails[profile] = stop_event
+
+    def _tailer():
+        path = os.path.join(workbench_blueprint.LOG_DIR, f"{profile}_sync.jsonl")
+        last_pos = 0
+        while not stop_event.is_set():
+            if os.path.exists(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        f.seek(last_pos)
+                        lines = f.readlines()
+                        last_pos = f.tell()
+                        
+                        actions = []
+                        for line in lines: 
+                            actions.extend(format_line(line))
+                        if actions: 
+                            ui_callback(actions)
+                except Exception: 
+                    pass
+            time.sleep(0.3)
+
+    # Run as a daemon thread so it dies when the app closes
+    threading.Thread(target=_tailer, daemon=True).start()
+
+def stop_live_feed(profile: str):
+    """Stops the tailer thread for a specific profile."""
+    if profile in _active_tails:
+        _active_tails[profile].set()
