@@ -4,15 +4,17 @@ This application uses a gamified, inventory-based framework for managing rclone 
 ## System Architecture
 The Workbench operates as a multi-layered ecosystem where data, logic, and execution are strictly decoupled:
 
-  - `workbench_blueprint.py`: __The Data Authority__. Contains the `CONFIG_SCHEMA` (tools) and `SMART_SCHEMA` (procedures). It is the sole source of truth for card definitions.
-  - `rules_engine.py`: __The Logic Processor__. Evaluates card relationships (`expects`, `rejects`, `satisfy`) and enforces validation to ensure a valid command state.
-  - `smart_automations.py`: __The Heuristic Scanner__. Checks the local environment (e.g., scanning for `.lst` files in `~/.cache/rclone/bisync`) to recommend relevant Smart Presets.
-  - `smart_logic_hooks.py`: __The Orchestrator__. Contains Python methods triggered by a preset's `python_hook`. It handles complex tasks like session normalization or creating safety sentinel files.
+  - `workbench_blueprint.py`: __The Data Authority__. Defines the `CONFIG_SCHEMA` (Tools) and `SMART_SCHEMA` (Procedures). This is the source of truth for all UI cards.
+  - `rules_engine.py`: __The Logic Processor__. A recursive engine that evaluates card relationships (`expects`, `rejects`, `satisfy`) to ensure a valid command-line state.
+  - `smart_automations.py`: __The Heuristic Scanner__. Analyzes the local `~/.cache/rclone/bisync` directory for session listings (`.lst`) and lock files (`.lck`) to recommend Presets.
+  - `smart_logic_hooks.py`: __The Orchestrator__. Contains side-effect methods (e.g., `setup_trash_bins`) triggered by Presets to modify the environment or inject mandatory filters.
   - `rclone_runner.py`: __The Backend Executor__. Manages the subprocess calls to rclone bisync, captures exit codes, and pipes raw JSONL output to the logs.
   - `log_formatter.py`: __The Parser__. Translates raw rclone JSONL logs into human-readable actions for the UI.
   - `config_manager.py`: __The Persistence Layer__. Handles the loading and saving of bisync_settings.json and ensures profile integrity.
   - `main_tray.py` / `app.py`: __The Main Controller__. Manages the application lifecycle, system tray integration, and cross-module communication.
   - `workbench_ui.py`: __The Canvas__. The GTK3 interface where users interact with the Inventory, Smart Presets, and the command Canvas
+
+> **Note on Environment**: The Workbench explicitly targets the Linux environment, resolving `RCLONE_CONF_PATH` at `~/.config/rclone/rclone.conf` and managing session state within `~/.cache/rclone/bisync`.
 
 ## Anatomy of a Smart Preset
 Procedures in `SMART_SCHEMA` are __Master Keys__ that orchestrate the application's behavior across multiple modules.
@@ -112,11 +114,11 @@ The UI must support these card types and render them appropriately:
 
 - `check` — A toggle-style card. When equipped it emits the flag with no value (e.g., `--resync`).
 - `entry` — A single text input. When equipped it emits `--flag "value"`.
-- `combo` — A dropdown selector for a single predefined value.
-- `multi` — A set of independent checkboxes that combine into a comma-separated value for the flag (e.g., `--compare "size,modtime"`).
-- `stack` — A multiline text field used for rules like -`-filter` where each line is meaningful to create `-- flag --flagX value1 (= + or - with string) --flagX value2` sidewise multiple times.
-- `count` — A repeatable counter (e.g., `-v`, `-vv`). UI renders `+`/`-` controls; generator emits __repeated shorthand flags__ (e.g., `-v` × 3 → `-vvv`).
-- `entry_array` — Accepts multiple independent strings (e.g., multiple `--exclude` values). The UI must allow adding/removing entries, and the generator should emit __repeated flags__ for each entry.
+- `combo` — A dropdown selector for a single predefined value. Requires `options` key to have its effect.
+- `multi` — A set of independent checkboxes that combine into a comma-separated value for the flag (e.g., `--compare "size,modtime"`). Requires `options` key to have its effect.
+- `text` — A multiline text field used for rules where each line is meaningful to create `--flagX value1 --flagX value2 ...` pattern.
+- `count` — A repeatable counter (e.g., `-v`, `-vv`). UI renders `+`/`-` controls; generator emits __repeated shorthand flags__ (e.g., `-v` × 3 → `-vvv`). Requires `short` key to have its effect.
+- `stack` — Accepts multiple independent strings (e.g., multiple `--exclude` values). The UI must allow adding/removing entries, and the generator should emit __repeated flags__ for each entry. This is much more user friendly type than `text` whereas plays the same role.
 
 ### Rule Interaction Examples
 These examples demonstrate how the Rules Engine ensures a valid command state within the Workbench UI by processing dependencies and constraints in a recursive cascade.
@@ -228,21 +230,32 @@ Prevents deadlocks in background automation by enforcing the rclone technical mi
   "type": "entry",
   "flag": "--max-lock",
   "default": "2m",
-  "validation": {"min": "2m"}
+  "validation": {
+    "min_duration": "2m"
+  },
+  "desc": "Prevents deadlocks in background automation by enforcing rclone's technical minimum."
 }
 ```
 ### Smart Preset: Safe Recovery
 An example of a Procedure that uses a one-time lifecycle and a logic hook to rebuild state safely.
 ```json
 {
-  "label": "Safe Resync (Reset Button)",
-  "key": "preset_safe_resync",
+  "label": "Master Safe Resync",
+  "key": "preset_master_resync",
   "trigger_condition": "missing_listing_file",
   "lifecycle": "one_time",
-  "python_hook": "normalize_session_path",
-  "payload": {
-    "expects": ["resync", "resync_mode", "dry_run"],
-    "satisfy": {"resync_mode": "newer"}
+  "desc": "Automated baseline reconciliation for first runs or clearing critical lockouts.",
+  "expects": ["resync", "resync_mode", "resilient", "recover"],
+  "satisfy": {
+    "resync": true,
+    "resync_mode": "newer",
+    "resilient": true
   }
 }
 ```
+## Logic Engine Syntax
+The Workbench uses a triple-constraint system to manage rclone flags:
+
+- **`expects`**: A list of keys that *must* be equipped for this card to function. If a Tool is equipped, its "Prerequisites" are automatically pulled onto the Canvas.
+- **`rejects`**: A list of keys that are mutually exclusive. Equipping a card with a "Conflict" will automatically unequip the offending card.
+- **`satisfy`**: A dictionary of key-value pairs. When the card is equipped, the engine forces these specific values on other cards and locks them in the UI to prevent user error.

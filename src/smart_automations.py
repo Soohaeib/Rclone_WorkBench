@@ -1,17 +1,24 @@
 # smart_automations.py
-import os, glob
-from src.workbench_blueprint import SMART_SCHEMA
+import os
+import glob
 
-def scan_environment(profile, local_path):
-    """Recommends presets based on the file system state."""
-    recommendations = []
+def scan_environment(local_path, remote_profile):
+    """
+    Scans the local filesystem state to recommend Smart Presets.
+    """
+    recommendations = ["preset_safe_trash"] 
     
-    # If no listing files exist, suggest Resilient Sync for auto-recovery
-    lck_files = glob.glob(os.path.expanduser(f'~/.cache/rclone/bisync/*{profile}*.lst'))
-    if not lck_files:
-        recommendations.append("preset_resilient")
-        
-    # Always recommend Safe Trash protection
-    recommendations.append("preset_safe_trash")
-    
-    return recommendations
+    cache_dir = os.path.expanduser("~/.cache/rclone/bisync")
+    anchor_name = os.path.basename(local_path.strip('/')) if local_path else remote_profile
+    session_glob = f"*{anchor_name}*"
+
+    # Look for standard listings, error-state listings, and deadlocks
+    lst_files = glob.glob(os.path.join(cache_dir, f"{session_glob}.path1.lst"))
+    err_files = glob.glob(os.path.join(cache_dir, f"{session_glob}.path1.lst-err"))
+    lck_files = glob.glob(os.path.join(cache_dir, f"{session_glob}.lck"))
+
+    # TRIGGER LOGIC: Identify Initialization OR Critical Failure
+    if not lst_files or err_files or len(lck_files) > 0:
+        recommendations.append("preset_master_resync")
+
+    return list(set(recommendations))

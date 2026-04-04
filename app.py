@@ -1,21 +1,12 @@
-import os
-import signal
-import threading
-import time
-import datetime
-import configparser
-import gi
+import os, signal, threading, time, datetime, configparser, gi
 
 gi.require_version('Gtk', '3.0')
 gi.require_version('AppIndicator3', '0.1')
 gi.require_version('Notify', '0.7')
+
 from gi.repository import Gtk, AppIndicator3, Notify, GLib
 
-import src.workbench_blueprint as workbench_blueprint
-import src.config_manager as config_manager
-import src.workbench_ui as workbench_ui
-import src.rclone_runner as rclone_runner
-import src.log_formatter as log_formatter
+from src import workbench_blueprint, config_manager, workbench_ui, rclone_runner, log_formatter
 
 Notify.init("RClone Tray")
 
@@ -62,10 +53,13 @@ class SyncThread(threading.Thread):
                 self.last = datetime.datetime.now().strftime("%H:%M")
                 
                 if res.get("success"): 
-                    send_notification("Complete", f"✔ {self.profile.upper()} updated.")
+                    send_notification("Complete", f"✔ {self.profile.upper()} :: Bisync Complete!")
+                    # LIFECYCLE MONITORING: Trigger Canvas cleanup on exit 0
+                    if getattr(self.app, 'workbench', None) and hasattr(self.app.workbench, 'post_sync_cleanup'):
+                        self.app.workbench.post_sync_cleanup(self.profile)
                 else: 
                     self.err = True
-                    send_notification("Failed", f"✘ {self.profile.upper()} encountered an error.", True)
+                    send_notification("Failed", f"✘ {self.profile.upper()} :: Error Encountered!", True)
                 
                 self.run_state, self.proc = False, None
                 

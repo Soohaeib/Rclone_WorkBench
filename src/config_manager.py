@@ -25,7 +25,6 @@ def ensure_profile_exists(profile):
         defaults = {}
         for section in CONFIG_SCHEMA.values():
             for item in section:
-                # Use default value if provided, or empty string/False based on type
                 val = item.get('default', "") if item['type'] != 'check' else False
                 defaults[item['key']] = val
         
@@ -45,24 +44,25 @@ def build_base_args(profile, global_cfg, inferred_locks):
         for item in section:
             key, flag = item['key'], item.get('flag')
             if not flag: 
-                continue # Skips internal UI keys that don't have rclone flags
+                continue 
             
-            # Priority: 1. Rules Engine Overrides (inferred_locks) 2. Saved Config
             val = inferred_locks.get(key) if key in inferred_locks else profile_cfg.get(key)
             if not val: 
                 continue
             
-            # Type-specific flag construction
+            # --- Dynamic Token Injection ---
+            if isinstance(val, str):
+                val = val.replace("{remote_profile}", profile)
+            # -------------------------------
+            
             if item['type'] == 'check' and val is True:
                 args.append(flag)
             elif item['type'] in ['entry', 'combo']:
                 args.extend([flag, str(val).strip()])
             elif item['type'] == 'multi':
-                # For flags like --compare size,modtime
                 cleaned = ",".join([p.strip() for p in val.split(',') if p.strip()])
                 if cleaned: args.extend([flag, cleaned])
             elif item['type'] == 'stack':
-                # For repetitive flags like --filter
                 lines = [line.strip() for line in str(val).split('\n') if line.strip()]
                 for line in lines:
                     args.extend([flag, line])
