@@ -1,4 +1,3 @@
-# workbench_blueprint.py
 import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Union
@@ -55,9 +54,9 @@ SMART_SCHEMA = {
             auto_apply=False,
             color="#e74c3c",
             desc="Automated baseline reconciliation for first runs or clearing critical lockouts.",
-            expects=["resync", "resync_mode", "resilient", "recover", "verbose"],
+            expects=["resync", "resync_mode", "resilient", "recover"],
             rejects=["track_renames"],
-            satisfy={"resync": True, "resync_mode": "newer", "resilient": True, "recover": True, "verbose": 2}
+            satisfy={"resync": True, "resync_mode": "newer", "resilient": True, "recover": True}
         ),
         SmartPreset(
             label="Safe Trash Protection",
@@ -67,9 +66,14 @@ SMART_SCHEMA = {
             auto_apply=False,
             python_hook="setup_trash_bins",
             color="#2ecc71",
-            desc="Persistent delete protection routing files to dedicated safety bins.",
-            expects=["backup_path_1", "backup_path_2", "filter"],
-            satisfy={"backup_path_1": TRASH_LOCAL_NAME, "backup_path_2": TRASH_CLOUD_NAME, "filter": f"- {TRASH_LOCAL_NAME}/**\n- {TRASH_CLOUD_NAME}/**"}
+            desc="Routes deleted/conflicting files to dedicated trash bins with timestamped suffixes.",
+            expects=["backup_path_1", "backup_path_2", "filter", "conflict_suffix"],
+            satisfy={
+                "backup_path_1": TRASH_LOCAL_NAME, 
+                "backup_path_2": TRASH_CLOUD_NAME, 
+                "filter": f"- {TRASH_LOCAL_NAME}/**\n- {TRASH_CLOUD_NAME}/**",
+                "conflict_suffix": ".old"
+            }
         )
     ]
 }
@@ -98,7 +102,7 @@ CONFIG_SCHEMA = {
         ToolItem(label="Dry Run", key="dry_run", type="check", flag="--dry-run", short="-n", default_equipped=True, color="#2ecc71", desc="Trial run with no permanent changes."),
         ToolItem(label="Backup Local", key="backup_path_1", type="entry", flag="--backup-dir1", color="#2ecc71", desc="Local safety bin."),
         ToolItem(label="Backup Cloud", key="backup_path_2", type="entry", flag="--backup-dir2", color="#2ecc71", desc="Cloud safety bin."),
-        ToolItem(label="Filter", key="filter", type="stack", flag="--filter", color="#f1c40f", desc="Rules to exclude trash or system files.")
+        ToolItem(label="Filter", key="filter", type="text", flag="--filter", color="#f1c40f", desc="Rules to exclude trash or system files.")
     ],
     "Engine": [
         ToolItem(label="Resilient", key="resilient", type="check", flag="--resilient", default_equipped=True, color="#3498db", desc="Self-heals from network interruptions."),
