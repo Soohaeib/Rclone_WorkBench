@@ -180,31 +180,30 @@ class InventoryWorkbench:
     def setup_smart_presets(self):
         """Builds Smart Presets once and dynamically generates CSS for toggle handles."""
         dynamic_css = ""
+        # blueprint.SMART_SCHEMA contains SmartPreset objects
         for i in blueprint.SMART_SCHEMA.get("Smart Automations", []):
             hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            hbox.set_tooltip_text(i.get('desc', ''))
+            hbox.set_tooltip_text(i.desc) # Changed from i.get('desc')
             hbox.set_margin_start(8); hbox.set_margin_end(8)
 
-            color = i.get('color', '#3498db')
+            color = i.color # Changed from i.get('color')
             lbl = Gtk.Label(xalign=0)
-            lbl.set_markup(f"<span foreground='{color}'><b>{i['label']}</b></span>")
+            lbl.set_markup(f"<span foreground='{color}'><b>{i.label}</b></span>") # Changed from i['label']
             hbox.pack_start(lbl, True, True, 0)
 
             switch = Gtk.Switch()
             switch.set_valign(Gtk.Align.CENTER)
             
-            # Create a unique CSS name to style just this switch's background
-            css_name = f"smart_switch_{i['key']}"
+            css_name = f"smart_switch_{i.key}" # Changed from i['key']
             switch.set_name(css_name)
             dynamic_css += f"#{css_name}:checked {{ background-image: none; background-color: {color}; }}\n"
             
-            switch.connect('notify::active', self.on_smart_preset_toggled, i['key'])
+            switch.connect('notify::active', self.on_smart_preset_toggled, i.key) # Changed from i['key']
             
-            self.smart_toggles[i['key']] = switch
+            self.smart_toggles[i.key] = switch # Changed from i['key']
             hbox.pack_end(switch, False, False, 0)
             self.smart_container.pack_start(hbox, False, False, 0)
 
-        # Apply the colored toggle CSS
         provider = Gtk.CssProvider()
         provider.load_from_data(dynamic_css.encode())
         Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -318,8 +317,12 @@ class InventoryWorkbench:
                 del current_rows[k]
                 
         for k in display_keys:
+            item = self.items_lookup[k]
             if k not in current_rows:
-                val = forced_values.get(k, self.items_lookup[k].get('default'))
+                # FIX: Use getattr because SmartPresets don't have a 'default' attribute
+                default_val = getattr(item, 'default', "")
+                val = forced_values.get(k, default_val)
+                
                 new_row = self.create_canvas_card(k, val, is_locked=(k in locked_keys))
                 self.can_list.add(new_row)
                 current_rows[k] = new_row
@@ -331,8 +334,12 @@ class InventoryWorkbench:
             r.set_sensitive(not is_locked)
             card_box = r.get_child()
             drop_btn = card_box.get_children()[0].get_children()[-1]
-            if is_locked: drop_btn.hide()
-            elif str(self.items_lookup[k].get('default_equipped')) != "0": drop_btn.show()
+            
+            if is_locked: 
+                drop_btn.hide()
+            # FIX: Use dot notation for default_equipped
+            elif str(getattr(self.items_lookup[k], 'default_equipped', "0")) != "0": 
+                drop_btn.show()
 
         for k, btn in self.smart_toggles.items():
             if btn.get_active() != (k in target_keys):
@@ -340,7 +347,7 @@ class InventoryWorkbench:
 
         self._updating_rules = False
         self.refresh_inventory()
-
+        
     def refresh_inventory(self):
         """Rebuilds the middle Inventory column based on active filters."""
         for c in self.inventory_container.get_children(): 
@@ -352,8 +359,10 @@ class InventoryWorkbench:
 
         for cat, items in blueprint.CONFIG_SCHEMA.items():
             if active_cat != "All Categories" and cat != active_cat: continue
-            available = [i for i in items if i['key'] not in excluded and str(i.get('default_equipped')) != "0" 
-                         and (not search or search in f"{i.get('label','')} {i.get('key','')} {i.get('desc','')}".lower())]
+            
+            # Accessing ToolItem attributes via dot notation
+            available = [i for i in items if i.key not in excluded and str(i.default_equipped) != "0" 
+                        and (not search or search in f"{i.label} {i.key} {i.desc}".lower())]
             if not available: continue
             
             grp = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
@@ -361,21 +370,65 @@ class InventoryWorkbench:
             grp.pack_start(lbl, False, False, 0)
             
             flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE)
-            for i in available: flow.add(self.create_chip(i['key']))
+            for i in available: flow.add(self.create_chip(i.key))
             grp.pack_start(flow, False, False, 0)
             self.inventory_container.pack_start(grp, False, False, 0)
             
         self.window.show_all()
 
     def update_preview(self):
-        profile = self.profile_combo.get_active_text()
+        """Generates the live rclone command preview, correctly applying Smart Schema rules."""
+        
+        # FIX: Ensure apply_btn exists before we try to turn it off/on. 
+        # If using Glade, grab it from the builder. If manual UI, this assumes it exists.
+        if not hasattr(self, 'apply_btn'):
+            self.apply_btn = self.builder.get_object("btn_apply") if hasattr(self, 'builder') else None
+
+        profile = self.profile_combo.get_active_text() or "[PROFILE]"
+        local_path = self.path_entry.get_text() or "[LOCAL_PATH]"
+        
+        # 1. Gather raw UI state from canvas and smart toggles
         live_state = {r.key: self.get_row_value(r) for r in self.can_list.get_children()}
-        live_state.update({k: btn.get_active() for k, btn in self.smart_toggles.items()})
+        for k, btn in self.smart_toggles.items():
+            if btn.get_active():
+                live_state[k] = True
+                
+        # 2. Run state through Rules Engine to capture Smart Schema "satisfy" injections
+        active_keys = [k for k, v in live_state.items() if v is True or (isinstance(v, str) and v)]
+        _, forced_values, _ = rules_engine.evaluate_state(active_keys, self.items_lookup)
+        
+        # Merge the forced smart values into the preview state
+        preview_state = live_state.copy()
+        preview_state.update(forced_values)
+
+        # 3. Validate Constraints
+        errors = rules_engine.validate_state(preview_state, self.items_lookup)
+        if errors:
+            self.preview_view.get_buffer().set_text("VALIDATION ERRORS:\n" + "\n".join([f"❌ {k}: {msg}" for k, msg in errors.items()]))
+            self.preview_view.get_style_context().add_class("console-error")
+            if self.apply_btn: self.apply_btn.set_sensitive(False) # Safe check
+            return
+
+        # 4. Generate Command
         try:
-            args = config_manager.build_base_args(profile, self.global_cfg, live_state)
-            cmd = f"rclone {' '.join(args)} {self.path_entry.get_text() or '[PATH]'} {profile}:"
-            self.preview_view.get_buffer().set_text(cmd)
-        except: self.preview_view.get_buffer().set_text("Preview Error")
+            self.preview_view.get_style_context().remove_class("console-error")
+            
+            args = config_manager.build_base_args(profile, self.global_cfg, preview_state)
+            safe_args = [f'"{a}"' if ' ' in str(a) else str(a) for a in args]
+            
+            p1 = f'"{local_path}"' if ' ' in local_path else local_path
+            p2 = f"{profile}:"
+            
+            cmd_str = f"rclone bisync {p1} {p2} {' '.join(safe_args)}"
+            
+            self.preview_view.get_buffer().set_text(cmd_str)
+            if self.apply_btn: self.apply_btn.set_sensitive(True) # Safe check
+            
+        except Exception as e:
+            import traceback
+            err_msg = f"PREVIEW ERROR:\n{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            self.preview_view.get_buffer().set_text(err_msg)
+            if self.apply_btn: self.apply_btn.set_sensitive(False) # Safe check
 
     def load_data(self):
         """Loads memory state, scans environment, and injects into UI."""
@@ -384,26 +437,22 @@ class InventoryWorkbench:
 
         self._updating_rules = True
         
+        # Use self.path_entry instead of self.local_path_entry
         local_path = self.global_cfg.get('local_paths', {}).get(profile, "")
-        self.path_entry.set_text(local_path)
+        self.path_entry.set_text(local_path) 
+        
         prof_cfg = self.global_cfg.get('remote_configs', {}).get(profile, {})
+        active_keys = {k for k, v in prof_cfg.items() if v is True or (isinstance(v, str) and v)}
         
-        # Pull active keys
-        active_keys = [k for k, v in prof_cfg.items() if v is True or (isinstance(v, str) and v)]
-        
-        # Scanner Auto-Apply check: If safe master resync is recommended, activate it
+        # Scanner Auto-Apply check
         heuristics = smart_automations.scan_environment(local_path, profile)
         for rec in heuristics:
             item = self.items_lookup.get(rec)
-            if item and item.get("auto_apply"):
-                if rec not in active_keys:
-                    active_keys.append(rec)
+            # Use getattr because only SmartPresets have auto_apply
+            if item and getattr(item, "auto_apply", False):
+                active_keys.add(rec)
         
         fk, merged, lk = rules_engine.evaluate_state(active_keys, self.items_lookup)
-        
-        for k in fk:
-            if k not in merged and k in prof_cfg: merged[k] = prof_cfg[k]
-                
         self._apply_new_state(fk, merged, lk)
         
         self._updating_rules = False 
@@ -428,9 +477,9 @@ class InventoryWorkbench:
     # --- Widget Generators ---
     def create_chip(self, key):
         i = self.items_lookup[key]
-        color = i.get('color', '#ecf0f1') # Default color if none specified
+        color = i.color # Changed from i.get('color')
         lbl = Gtk.Label()
-        lbl.set_markup(f"<span foreground='{color}'><b>{i['label']}</b></span>")
+        lbl.set_markup(f"<span foreground='{color}'><b>{i.label}</b></span>") # Changed from i['label']
         
         btn = Gtk.Button()
         btn.add(lbl)
@@ -440,74 +489,77 @@ class InventoryWorkbench:
 
     def create_canvas_card(self, key, val=None, is_locked=False):
         i = self.items_lookup.get(key)
-        color = i.get('color', '#ecf0f1')
+        color = i.color
         
         row = Gtk.ListBoxRow(); row.key = key
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         card.get_style_context().add_class("canvas-card")
         
         top = Gtk.Box(spacing=10)
-        # Card header text styled dynamically 
-        top.pack_start(Gtk.Label(label=f"<span foreground='{color}'><b>{i['label']}</b></span>", use_markup=True, xalign=0), True, True, 0)
+        top.pack_start(Gtk.Label(label=f"<span foreground='{color}'><b>{i.label}</b></span>", use_markup=True, xalign=0), True, True, 0)
         drop = Gtk.Button(label="✕")
         drop.connect("clicked", lambda _: self.unequip_logic(row))
         top.pack_end(drop, False, False, 0)
         card.pack_start(top, False, False, 0)
         
         row.input_widget = None
-        if i.get('type') == 'entry':
+        # Only create input widgets for types that need them
+        item_type = getattr(i, 'type', None)
+        if item_type == 'entry':
             row.input_widget = Gtk.Entry(text=str(val or ""))
             row.input_widget.connect("changed", self.check_dirty)
             card.pack_start(row.input_widget, False, False, 0)
-        elif i.get('type') == 'combo':
+        elif item_type == 'combo':
             row.input_widget = Gtk.ComboBoxText()
-            opts = i.get('options', [])
+            opts = getattr(i, 'options', [])
             for opt in opts: row.input_widget.append_text(opt)
-            if val in opts: row.input_widget.set_active(opts.index(val))
+            if str(val) in opts: row.input_widget.set_active(opts.index(str(val)))
             row.input_widget.connect("changed", self.check_dirty)
             card.pack_start(row.input_widget, False, False, 0)
-            
+                
         row.add(card)
         return row
 
     def get_row_value(self, row):
         i = self.items_lookup[row.key]
-        if i.get('type') == 'check' or not i.get('type'): return True
-        if not hasattr(row, 'input_widget') or not row.input_widget: return None
-        if i['type'] == 'entry': return row.input_widget.get_text()
-        if i['type'] == 'combo': return row.input_widget.get_active_text()
+        item_type = getattr(i, 'type', 'check')
+        
+        # Checkbox and Count items don't have input widgets; they are just 'active'
+        if item_type in ['check', 'count'] or not row.input_widget:
+            return True
+            
+        if item_type == 'entry':
+            return row.input_widget.get_text()
+        if item_type == 'combo':
+            return row.input_widget.get_active_text()
         return None
 
     def set_row_value(self, row, val):
         i = self.items_lookup[row.key]
-        if i.get('type') == 'entry': row.input_widget.set_text(str(val))
-        elif i.get('type') == 'combo':
-            opts = i.get('options', [])
-            if str(val) in opts: row.input_widget.set_active(opts.index(str(val)))
+        # FIX: Use .type and .options
+        if i.type == 'entry':
+            row.input_widget.set_text(str(val or ""))
+        elif i.type == 'combo':
+            opts = i.options
+            if str(val) in opts:
+                row.input_widget.set_active(opts.index(str(val)))
     
     def post_sync_cleanup(self, profile):
-        """Called by app.py upon successful 'exit 0' to scrub one_time presets."""
-        # Ensure we only affect the currently visible profile if it matches
-        is_active_profile = (self.profile_combo.get_active_text() == profile)
-        
-        prof_cfg = self.global_cfg.get('remote_configs', {}).get(profile, {})
+        """Scrub one_time presets after success."""
+        prof_cfg = self.global_cfg.get('remote_configs', {}).get(profile, {2})
         changed = False
         
-        # Strip one-time smart keys
         for i in blueprint.SMART_SCHEMA.get("Smart Automations", []):
-            if i.get("lifecycle") == "one_time" and prof_cfg.get(i['key']):
-                prof_cfg[i['key']] = False
+            # FIX: Use i.lifecycle and i.key
+            if i.lifecycle == "one_time" and prof_cfg.get(i.key):
+                prof_cfg[i.key] = False
                 changed = True
                 
         if changed:
-            # Re-evaluate logic without the one_time preset to automatically drop dependencies (like resync)
             active_keys = [k for k, v in prof_cfg.items() if v is True or (isinstance(v, str) and v)]
             fk, merged, lk = rules_engine.evaluate_state(active_keys, self.items_lookup)
-            
-            # Save the clean state
             self.global_cfg['remote_configs'][profile] = merged
             config_manager.save_config(self.global_cfg)
             
-            # If the user is currently looking at this profile, redraw the UI
-            if is_active_profile:
-                GLib.idle_add(self.load_data)
+            if self.profile_combo.get_active_text() == profile:
+                self._apply_new_state(fk, merged, lk)

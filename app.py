@@ -53,13 +53,13 @@ class SyncThread(threading.Thread):
                 self.last = datetime.datetime.now().strftime("%H:%M")
                 
                 if res.get("success"): 
-                    send_notification("Complete", f"✔ {self.profile.upper()} :: Bisync Complete!")
+                    send_notification("Complete", f"{self.profile.upper()} :: Bisync Complete!")
                     # LIFECYCLE MONITORING: Trigger Canvas cleanup on exit 0
                     if getattr(self.app, 'workbench', None) and hasattr(self.app.workbench, 'post_sync_cleanup'):
                         self.app.workbench.post_sync_cleanup(self.profile)
                 else: 
                     self.err = True
-                    send_notification("Failed", f"✘ {self.profile.upper()} :: Error Encountered!", True)
+                    send_notification("Failed", f"{self.profile.upper()} :: Error Encountered!", True)
                 
                 self.run_state, self.proc = False, None
                 

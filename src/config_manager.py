@@ -33,36 +33,32 @@ def ensure_profile_exists(profile):
     return cfg
 
 def build_base_args(profile, global_cfg, inferred_locks):
-    """
-    Translates the UI state (and any logic overrides) into Rclone flags.
-    inferred_locks: values forced by the Rules Engine (e.g., 'satisfy' rules).
-    """
-    profile_cfg = global_cfg.get('remote_configs', {}).get(profile, {})
+    cfg = global_cfg.get('remote_configs', {}).get(profile, {})
     args = []
     
-    for section in CONFIG_SCHEMA.values():
+    # Use blueprint (so ensure you have 'import src.workbench_blueprint as blueprint' at the top)
+    import src.workbench_blueprint as blueprint
+    
+    for section in blueprint.CONFIG_SCHEMA.values():
         for item in section:
-            key, flag = item['key'], item.get('flag')
-            if not flag: 
-                continue 
+            # FIX: Use dot notation here
+            k = item.key
+            flag = getattr(item, 'flag', None)
             
-            val = inferred_locks.get(key) if key in inferred_locks else profile_cfg.get(key)
-            if not val: 
-                continue
+            if not flag: continue # Skips Smart Presets automatically
             
-            # --- Dynamic Token Injection ---
-            if isinstance(val, str):
-                val = val.replace("{remote_profile}", profile)
-            # -------------------------------
+            val = inferred_locks.get(k) if k in inferred_locks else cfg.get(k)
+            if not val: continue
             
-            if item['type'] == 'check' and val is True:
+            # FIX: Use dot notation for type checking
+            if item.type == 'check' and val is True:
                 args.append(flag)
-            elif item['type'] in ['entry', 'combo']:
+            elif item.type in ['entry', 'combo']:
                 args.extend([flag, str(val).strip()])
-            elif item['type'] == 'multi':
+            elif item.type == 'multi':
                 cleaned = ",".join([p.strip() for p in val.split(',') if p.strip()])
                 if cleaned: args.extend([flag, cleaned])
-            elif item['type'] == 'stack':
+            elif item.type == 'stack':
                 lines = [line.strip() for line in str(val).split('\n') if line.strip()]
                 for line in lines:
                     args.extend([flag, line])
