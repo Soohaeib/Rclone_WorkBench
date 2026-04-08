@@ -2,13 +2,11 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Union
 
-# --- Path Definitions ---
 APP_DIR = os.path.expanduser('~/Scripts/WorkBench')
 RCLONE_CONF_PATH = os.path.expanduser('~/.config/rclone/rclone.conf')
 JSON_CONFIG_FILE = os.path.join(APP_DIR, 'bisync_settings.json')
 LOG_DIR = os.path.join(APP_DIR, 'logs')
 
-# --- Trash Naming Conventions ---
 TRASH_LOCAL_NAME = '.rclone_trash_local'
 TRASH_CLOUD_NAME = '.rclone_trash_cloud'
 
@@ -43,7 +41,6 @@ class ToolItem:
     satisfy: Dict[str, Union[bool, str, int]] = field(default_factory=dict)
     validation: Dict[str, str] = field(default_factory=dict)
 
-# --- The Smart Schema (Procedures) ---
 SMART_SCHEMA = {
     "Smart Automations": [
         SmartPreset(
@@ -66,19 +63,18 @@ SMART_SCHEMA = {
             auto_apply=False,
             python_hook="setup_trash_bins",
             color="#2ecc71",
-            desc="Routes deleted/conflicting files to dedicated trash bins with timestamped suffixes.",
-            expects=["backup_path_1", "backup_path_2", "filter", "conflict_suffix"],
+            desc="Routes deleted files to dedicated trash bins with dynamic timestamps.",
+            expects=["backup_path_1", "backup_path_2", "filter", "conflict_suffix", "suffix", "suffix_keep_extension"],
             satisfy={
                 "backup_path_1": TRASH_LOCAL_NAME, 
                 "backup_path_2": TRASH_CLOUD_NAME, 
                 "filter": f"- {TRASH_LOCAL_NAME}/**\n- {TRASH_CLOUD_NAME}/**",
-                "conflict_suffix": ".old"
+                # The dynamic timestamps will be injected via python_hook during execution
             }
         )
     ]
 }
 
-# --- The Config Schema (Tools) ---
 CONFIG_SCHEMA = {
     "Core Actions": [
         ToolItem(label="Force Full Resync", key="resync", type="check", flag="--resync", color="#e74c3c", rejects=["track_renames"], desc="Mandatory for first runs and state recovery."),
@@ -86,7 +82,7 @@ CONFIG_SCHEMA = {
         ToolItem(label="Track Renames", key="track_renames", type="check", flag="--track-renames", rejects=["resync"], color="#8e44ad", desc="Track moved files (Mutual exclusion with resync).")
     ],
     "General": [
-        ToolItem(label="Compare Mode", key="compare", type="entry", flag="--compare", default="size,modtime", color="#3498db", desc="Comma-separated list of compare options."),
+        ToolItem(label="Compare Mode", key="compare", type="multi", flag="--compare", options=["size", "modtime", "checksum"], default="size,modtime", color="#3498db", desc="Comma-separated list of compare options."),
         ToolItem(label="Conflict Resolve", key="conflict_resolve", type="combo", flag="--conflict-resolve", options=["none", "path1", "path2", "newer", "older", "larger", "smaller"], default="none", color="#e67e22", desc="Automatically prefer a version when a conflict is detected."),
         ToolItem(label="Conflict Loser", key="conflict_loser", type="combo", flag="--conflict-loser", options=["num", "pathname", "delete"], default="num", color="#e67e22", desc="Action to take on the 'loser' file of a sync conflict."),
         ToolItem(label="Conflict Suffix", key="conflict_suffix", type="entry", flag="--conflict-suffix", default="conflict", color="#e67e22", desc="Suffix used when renaming conflicting files."),
@@ -102,6 +98,8 @@ CONFIG_SCHEMA = {
         ToolItem(label="Dry Run", key="dry_run", type="check", flag="--dry-run", short="-n", default_equipped=True, color="#2ecc71", desc="Trial run with no permanent changes."),
         ToolItem(label="Backup Local", key="backup_path_1", type="entry", flag="--backup-dir1", color="#2ecc71", desc="Local safety bin."),
         ToolItem(label="Backup Cloud", key="backup_path_2", type="entry", flag="--backup-dir2", color="#2ecc71", desc="Cloud safety bin."),
+        ToolItem(label="Backup Suffix", key="suffix", type="entry", flag="--suffix", color="#2ecc71", desc="Suffix appended to backup directory files."),
+        ToolItem(label="Keep Extension", key="suffix_keep_extension", type="check", flag="--suffix-keep-extension", color="#2ecc71", desc="Preserve extension when applying suffix."),
         ToolItem(label="Filter", key="filter", type="text", flag="--filter", color="#f1c40f", desc="Rules to exclude trash or system files.")
     ],
     "Engine": [

@@ -1,4 +1,4 @@
-import gi, os, subprocess
+import gi, os, subprocess, uuid
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 from src import config_manager, rules_engine, log_formatter, smart_automations
@@ -9,25 +9,23 @@ class LiveOutputPanel:
     def __init__(self, remotes):
         self.container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.container.get_style_context().add_class("live-output-tab")
-        self.notebook = Gtk.Notebook()
-        self.notebook.get_style_context().add_class("live-output-notebook")
-        self.notebook.set_tab_pos(Gtk.PositionType.LEFT)
-        self.container.pack_start(self.notebook, True, True, 0)
-        self.change_callback = None
-        self.tabs = {}
+        self.notebook = Gtk.Notebook(); self.notebook.get_style_context().add_class("live-output-notebook")
+        self.notebook.set_tab_pos(Gtk.PositionType.LEFT); self.container.pack_start(self.notebook, True, True, 0)
+        self.change_callback = None; self.tabs = {}
         for profile in remotes:
             vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); vbox.set_border_width(8)
             header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
             status = Gtk.Label(label="● IDLE", xalign=0); status.get_style_context().add_class("status-line")
             header.pack_start(status, True, True, 0)
-            def _btn(icon, tip, cb): 
+            def _btn(icon, tip, cb):
                 b = Gtk.Button(tooltip_text=tip); b.add(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.BUTTON)); b.connect("clicked", cb); return b
             header.pack_end(_btn("view-refresh-symbolic", "Reload Log History", lambda _, p=profile: self.reload_log(p)), False, False, 0)
             header.pack_end(_btn("folder-open-symbolic", "Open Log Directory", lambda _, p=profile: self.on_open_log_dir(p)), False, False, 0)
             header.pack_end(_btn("user-trash-symbolic", "Delete Physical Log File", lambda _, p=profile: self.on_delete_log(p)), False, False, 0)
             header.pack_end(_btn("edit-clear-symbolic", "Clear Display", lambda _, p=profile: self.tabs[p]["buffer"].set_text("")), False, False, 0)
             vbox.pack_start(header, False, False, 0)
-            tv = Gtk.TextView(editable=False, cursor_visible=False, wrap_mode=Gtk.WrapMode.WORD_CHAR); tv.set_monospace(True); tv.get_style_context().add_class("log-view")
+            tv = Gtk.TextView(editable=False, cursor_visible=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+            tv.set_monospace(True); tv.get_style_context().add_class("log-view")
             sw = Gtk.ScrolledWindow(); sw.set_shadow_type(Gtk.ShadowType.IN); sw.add(tv); vbox.pack_start(sw, True, True, 0)
             label = Gtk.Label(label=profile.upper()); self.notebook.append_page(vbox, label)
             self.tabs[profile] = {'vbox': vbox, 'status': status, 'buffer': tv.get_buffer(), 'tv': tv, 'sw': sw}
@@ -99,8 +97,7 @@ class InventoryWorkbench:
         self.items_lookup = rules_engine.get_item_lookup()
         self.smart_keys = rules_engine.get_smart_keys()
         self.is_dirty = False; self._updating_rules = False; self.smart_toggles = {}
-        self.builder = Gtk.Builder()
-        self.builder.add_from_file(os.path.join(os.path.dirname(__file__), "workbench.glade"))
+        self.builder = Gtk.Builder(); self.builder.add_from_file(os.path.join(os.path.dirname(__file__), "workbench.glade"))
         self.window = self.builder.get_object("main_window")
         self.main_stack = self.builder.get_object("main_stack")
         self.profile_combo = self.builder.get_object("profile_combo")
@@ -134,6 +131,12 @@ class InventoryWorkbench:
         self.category_combo.set_active(0)
         for r in self.remotes: self.profile_combo.append_text(r)
         self.profile_combo.set_active(0)
+
+    def focus_profile(self, profile):
+        self.main_stack.set_visible_child_name("page1"); self.output_panel.focus_profile(profile)
+
+    def focus_workbench(self):
+        self.main_stack.set_visible_child_name("page0")
 
     def _setup_minimal_css(self):
         css = b".chip { border-radius: 999px; padding: 4px 10px; margin: 2px; } .canvas-card { margin-bottom: 6px; padding: 10px; border-bottom: 1px solid alpha(gray, 0.2); }"
@@ -218,22 +221,25 @@ class InventoryWorkbench:
 
     def _apply_new_state(self, target_keys, forced_values, locked_keys):
         self._updating_rules = True
-        display_keys = {k for k in target_keys if k not in self.smart_keys and k in self.items_lookup}
+        display_keys = {k for k in target_keys if k not in self.smart_keys and (k.split('__uid_')[0] if '__uid_' in k else k) in self.items_lookup}
         current_rows = {r.key: r for r in self.can_list.get_children()}
         for k in list(current_rows):
             if k not in display_keys:
                 self.can_list.remove(current_rows[k]); del current_rows[k]
         for k in display_keys:
-            item = self.items_lookup[k]
+            base_k = k.split('__uid_')[0] if '__uid_' in k else k
+            item = self.items_lookup[base_k]
             if k not in current_rows:
                 default_val = getattr(item, 'default', ""); val = forced_values.get(k, default_val)
                 new_row = self.create_canvas_card(k, val, is_locked=(k in locked_keys)); self.can_list.add(new_row); current_rows[k] = new_row
         for k, r in current_rows.items():
             if k in forced_values: self.set_row_value(r, forced_values[k])
-            is_locked = (k in locked_keys); r.set_sensitive(not is_locked)
-            card_box = r.get_child(); drop_btn = card_box.get_children()[0].get_children()[-1]
-            if is_locked: drop_btn.hide()
-            elif str(getattr(self.items_lookup[k], 'default_equipped', "0")) != "0": drop_btn.show()
+            is_locked = (k in locked_keys)
+            if hasattr(r, 'input_widget') and r.input_widget: r.input_widget.set_sensitive(not is_locked)
+            if hasattr(r, 'drop_btn'): r.drop_btn.set_visible(not is_locked)
+            if hasattr(r, 'split_btn') and getattr(self.items_lookup.get(k.split('__uid_')[0] if '__uid_' in k else k, {}), 'type', None) in ['text', 'stack']:
+                # keep split button visibility consistent with lock state
+                r.split_btn.set_visible(not is_locked and '__uid_' not in k)
         for k, btn in self.smart_toggles.items():
             if btn.get_active() != (k in target_keys): btn.set_active(k in target_keys)
         self._updating_rules = False; self.refresh_inventory()
@@ -261,9 +267,16 @@ class InventoryWorkbench:
         active_keys = [k for k, v in live_state.items() if v is True or (isinstance(v, str) and v)]
         _, forced_values, _ = rules_engine.evaluate_state(active_keys, self.items_lookup)
         preview_state = live_state.copy(); preview_state.update(forced_values)
+        import src.smart_logic_hooks as hooks
+        for k in active_keys:
+            base_k = k.split('__uid_')[0] if '__uid_' in k else k
+            item = self.items_lookup.get(base_k)
+            if item and getattr(item, 'python_hook', None):
+                hook_func = getattr(hooks, item.python_hook, None)
+                if hook_func: preview_state = hook_func(profile, local_path, f"{profile}:", preview_state)
         errors = rules_engine.validate_state(preview_state, self.items_lookup)
         if errors:
-            self.preview_view.get_buffer().set_text("VALIDATION ERRORS:\n" + "\n".join([f"❌ {k}: {msg}" for k, msg in errors.items()]))
+            self.preview_view.get_buffer().set_text("VALIDATION ERRORS:\n" + "\n".join([f"× {k}: {msg}" for k, msg in errors.items()]))
             self.preview_view.get_style_context().add_class("console-error")
             if getattr(self, 'apply_btn', None): self.apply_btn.set_sensitive(False)
             return
@@ -312,21 +325,39 @@ class InventoryWorkbench:
         btn = Gtk.Button(); btn.add(lbl); btn.get_style_context().add_class("chip"); btn.connect("clicked", lambda _: self.equip_logic(key)); return btn
 
     def create_canvas_card(self, key, val=None, is_locked=False):
-        i = self.items_lookup[key]; row = Gtk.ListBoxRow(); row.key = key
+        base_key = key.split('__uid_')[0] if '__uid_' in key else key
+        i = self.items_lookup[base_key]
+        row = Gtk.ListBoxRow(); row.key = key; row.set_activatable(False); row.set_selectable(False)
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5); card.get_style_context().add_class("canvas-card")
         top = Gtk.Box(spacing=10)
         top.pack_start(Gtk.Label(label=f"<span foreground='{i.color}'><b>{i.label}</b></span>", use_markup=True, xalign=0), True, True, 0)
-        drop = Gtk.Button(label="✕"); drop.connect("clicked", lambda _: self.unequip_logic(row)); top.pack_end(drop, False, False, 0); card.pack_start(top, False, False, 0)
-        row.input_widget = None; item_type = getattr(i, 'type', None)
+        item_type = getattr(i, 'type', None)
+        if item_type in ['text', 'stack'] and '__uid_' not in key:
+            split_btn = Gtk.Button(label="+"); split_btn.set_tooltip_text("Split into an additional unblocked entry")
+            def on_split(_):
+                uid_key = f"{base_key}__uid_{uuid.uuid4().hex[:6]}"
+                self.equip_logic(uid_key)
+            split_btn.connect("clicked", on_split); top.pack_end(split_btn, False, False, 0); row.split_btn = split_btn
+        drop = Gtk.Button(label="✕"); drop.connect("clicked", lambda _: self.unequip_logic(row)); top.pack_end(drop, False, False, 0); row.drop_btn = drop
+        card.pack_start(top, False, False, 0); row.input_widget = None
         if item_type == 'entry':
             row.input_widget = Gtk.Entry(text=str(val or "")); row.input_widget.connect("changed", self.check_dirty); card.pack_start(row.input_widget, False, False, 0)
+        elif item_type == 'multi':
+            flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE); flow.set_max_children_per_line(3); row.checkboxes = {}
+            opts = getattr(i, 'options', []); active_vals = [v.strip() for v in str(val or "").split(',')] if val else []
+            for opt in opts:
+                chk = Gtk.CheckButton(label=opt)
+                if opt in active_vals: chk.set_active(True)
+                chk.connect("toggled", lambda _: self.check_dirty()); flow.add(chk); row.checkboxes[opt] = chk
+            row.input_widget = flow; card.pack_start(flow, False, False, 0)
         elif item_type == 'combo':
             row.input_widget = Gtk.ComboBoxText(); opts = getattr(i, 'options', [])
             for opt in opts: row.input_widget.append_text(opt)
             if str(val) in opts: row.input_widget.set_active(opts.index(str(val)))
             row.input_widget.connect("changed", self.check_dirty); card.pack_start(row.input_widget, False, False, 0)
         elif item_type == 'text':
-            tv = Gtk.TextView(); tv.get_buffer().set_text(str(val or "")); tv.get_buffer().connect("changed", lambda _: self.check_dirty()); row.input_widget = tv
+            tv = Gtk.TextView(); tv.get_buffer().set_text(str(val or "")); tv.set_left_margin(4)
+            tv.get_buffer().connect("changed", lambda _: self.check_dirty()); row.input_widget = tv
             sw = Gtk.ScrolledWindow(); sw.set_min_content_height(80); sw.add(tv); card.pack_start(sw, False, False, 0)
         elif item_type == 'count':
             adj = Gtk.Adjustment(value=int(val or 0), lower=0, upper=5, step_increment=1); spin = Gtk.SpinButton(adjustment=adj, numeric=True)
@@ -334,9 +365,12 @@ class InventoryWorkbench:
         row.add(card); return row
 
     def get_row_value(self, row):
-        i = self.items_lookup[row.key]; t = getattr(i, 'type', 'check')
+        base_key = row.key.split('__uid_')[0] if '__uid_' in row.key else row.key
+        i = self.items_lookup[base_key]; t = getattr(i, 'type', 'check')
         if t in ['check'] or not getattr(row, 'input_widget', None): return True
         if t == 'entry': return row.input_widget.get_text()
+        if t == 'multi':
+            active = [opt for opt, chk in getattr(row, 'checkboxes', {}).items() if chk.get_active()]; return ",".join(active)
         if t == 'combo': return row.input_widget.get_active_text()
         if t == 'text':
             buf = row.input_widget.get_buffer(); return buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
@@ -344,8 +378,12 @@ class InventoryWorkbench:
         return None
 
     def set_row_value(self, row, val):
-        i = self.items_lookup[row.key]; t = getattr(i, 'type', None)
+        base_key = row.key.split('__uid_')[0] if '__uid_' in row.key else row.key
+        i = self.items_lookup[base_key]; t = getattr(i, 'type', None)
         if t == 'entry' and hasattr(row, 'input_widget'): row.input_widget.set_text(str(val or ""))
+        elif t == 'multi' and hasattr(row, 'checkboxes'):
+            active_vals = [v.strip() for v in str(val or "").split(',')] if val else []
+            for opt, chk in row.checkboxes.items(): chk.set_active(opt in active_vals)
         elif t == 'combo' and hasattr(row, 'input_widget'):
             opts = getattr(i, 'options', [])
             if str(val) in opts: row.input_widget.set_active(opts.index(str(val)))

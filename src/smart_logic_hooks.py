@@ -1,33 +1,28 @@
 # smart_logic_hooks.py
-import os
-import glob
+import os, glob, datetime
 import src.workbench_blueprint as blueprint
 
 def setup_trash_bins(profile, local_path, remote_path, live_state):
-    """Prepares the environment for Safe Trashing and prevents sync loops."""
+    """Prepares the environment for Safe Trashing by calculating absolute paths and dynamic timestamps."""
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
+    
+    # 1. Inject Dynamic Timestamps for suffixing
+    live_state['conflict_suffix'] = f"_{timestamp}.old"
+    live_state['suffix'] = f"_{timestamp}.old"
+    live_state['suffix_keep_extension'] = True
+    
+    # 2. Safely resolve local backup directory to an absolute path
     l_trash = live_state.get('backup_path_1', blueprint.TRASH_LOCAL_NAME)
     full_local_trash = os.path.join(local_path, l_trash) if not os.path.isabs(l_trash) else l_trash
     
     if not os.path.exists(full_local_trash):
         os.makedirs(full_local_trash, exist_ok=True)
+        
+    live_state['backup_path_1'] = full_local_trash
     
-    current_filters = live_state.get('filter', [])
-    if isinstance(current_filters, str):
-        current_filters = [f.strip() for f in current_filters.split('\n') if f.strip()]
-
-    required_rules = [
-        f"- {blueprint.TRASH_LOCAL_NAME}/**",
-        f"- {blueprint.TRASH_CLOUD_NAME}/**"
-    ]
-    
-    modified = False
-    for rule in required_rules:
-        if rule not in current_filters:
-            current_filters.append(rule)
-            modified = True
-            
-    if modified:
-        live_state['filter'] = "\n".join(current_filters)
+    # 3. Target remote backup directory
+    c_trash = live_state.get('backup_path_2', blueprint.TRASH_CLOUD_NAME)
+    live_state['backup_path_2'] = f"{profile}:{c_trash}"
         
     return live_state
 

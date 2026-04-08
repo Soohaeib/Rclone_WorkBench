@@ -40,21 +40,38 @@ class SyncThread(threading.Thread):
                 if getattr(self.app, 'workbench', None) and hasattr(self.app.workbench, 'set_status'):
                     self.app.workbench.set_status(self.profile, True)
                 
-                # Fetch current config for this profile
                 global_cfg = config_manager.load_config()
                 
-                # Build arguments based on the config manager's translation of the active state
-                args = ['bisync', self.path, f'{self.profile}:']
-                args.extend(config_manager.build_base_args(self.profile, global_cfg, {}))
+                # Dynamically evaluate the state
+                from src import rules_engine
+                lookup = rules_engine.get_item_lookup()
+                prof_cfg = global_cfg.get('remote_configs', {}).get(self.profile, {})
+                active_keys = [k for k, v in prof_cfg.items() if v is True or (isinstance(v, str) and v)]
+                fk, fv, _ = rules_engine.evaluate_state(active_keys, lookup)
                 
-                # Execute the process
+                run_state = prof_cfg.copy()
+                run_state.update(fv)
+                for k in fk:
+                    if k not in run_state: run_state[k] = True
+                
+                # Execute Python hooks (e.g. inject dynamic timestamps)
+                from src import smart_logic_hooks as hooks
+                for k in fk:
+                    base_k = k.split('__uid_')[0] if '__uid_' in k else k
+                    if base_k in lookup and getattr(lookup[base_k], 'python_hook', None):
+                        hook_func = getattr(hooks, lookup[base_k].python_hook, None)
+                        if hook_func:
+                            run_state = hook_func(self.profile, self.path, f'{self.profile}:', run_state)
+                
+                args = ['bisync', self.path, f'{self.profile}:']
+                args.extend(config_manager.build_base_args(self.profile, global_cfg, run_state))
+                
                 res = rclone_runner.run_sync_session(self.profile, args)
                 self.proc = res.get("process")
                 self.last = datetime.datetime.now().strftime("%H:%M")
                 
                 if res.get("success"): 
                     send_notification("Complete", f"{self.profile.upper()} :: Bisync Complete!")
-                    # LIFECYCLE MONITORING: Trigger Canvas cleanup on exit 0
                     if getattr(self.app, 'workbench', None) and hasattr(self.app.workbench, 'post_sync_cleanup'):
                         self.app.workbench.post_sync_cleanup(self.profile)
                 else: 
@@ -173,11 +190,13 @@ class RCloneWorkbenchApp:
     def open_workbench(self):
         """Spawns or brings the GTK Workbench to the foreground."""
         if not self.workbench:
-            # Extract the list of profiles from the thread keys
             profile_list = list(self.threads.keys())
-            # Pass the list, not the whole app instance
             self.workbench = workbench_ui.InventoryWorkbench(profile_list)
         
+        # Ensure the UI jumps to the Inventory page if opened from the general tray button
+        if hasattr(self.workbench, 'focus_workbench'):
+            self.workbench.focus_workbench()
+            
         self.workbench.show_all()
         self.workbench.present()
         return self.workbench

@@ -1,34 +1,24 @@
-import os
-import json
+import os, json
 from src.workbench_blueprint import APP_DIR, JSON_CONFIG_FILE
 
 def load_config():
-    """Loads the central JSON configuration file."""
     if not os.path.exists(JSON_CONFIG_FILE):
         return {"local_paths": {}, "remote_configs": {}}
     try:
-        with open(JSON_CONFIG_FILE, 'r') as f:
-            return json.load(f)
+        with open(JSON_CONFIG_FILE, 'r') as f: return json.load(f)
     except (json.JSONDecodeError, IOError):
         return {"local_paths": {}, "remote_configs": {}}
 
 def save_config(cfg):
-    """Saves the current state to disk."""
     os.makedirs(APP_DIR, exist_ok=True)
-    with open(JSON_CONFIG_FILE, 'w') as f:
-        json.dump(cfg, f, indent=4)
+    with open(JSON_CONFIG_FILE, 'w') as f: json.dump(cfg, f, indent=4)
 
 def ensure_profile_exists(profile):
-    """Initializes a profile with default values from the Blueprint if it doesn't exist."""
     import src.workbench_blueprint as blueprint
     cfg = load_config()
     if profile not in cfg.get('remote_configs', {}):
-        defaults = {}
-        for section in blueprint.CONFIG_SCHEMA.values():
-            for item in section:
-                val = getattr(item, 'default', "") if item.type != 'check' else False
-                defaults[item.key] = val
-        
+        defaults = {item.key: getattr(item, 'default', "") if item.type != 'check' else False
+                    for section in blueprint.CONFIG_SCHEMA.values() for item in section}
         cfg.setdefault('remote_configs', {})[profile] = defaults
         save_config(cfg)
     return cfg
@@ -36,40 +26,31 @@ def ensure_profile_exists(profile):
 def build_base_args(profile, global_cfg, inferred_locks):
     cfg = global_cfg.get('remote_configs', {}).get(profile, {})
     args = []
-    
     import src.workbench_blueprint as blueprint
-    
+    active_state = {**cfg, **inferred_locks}
     for section in blueprint.CONFIG_SCHEMA.values():
         for item in section:
-            k = item.key
             flag = getattr(item, 'flag', None)
-            
-            if not flag: continue 
-            
-            val = inferred_locks.get(k) if k in inferred_locks else cfg.get(k)
-            if not val: continue
-            
-            if item.type == 'check' and val is True:
-                args.append(flag)
-            elif item.type in ['entry', 'combo']:
-                args.extend([flag, str(val).strip()])
-            elif item.type == 'multi':
-                cleaned = ",".join([p.strip() for p in str(val).split(',') if p.strip()])
-                if cleaned: args.extend([flag, cleaned])
-            elif item.type == 'stack' or item.type == 'text':
-                lines = [line.strip() for line in str(val).split('\n') if line.strip()]
-                for line in lines:
-                    args.extend([flag, line])
-            elif item.type == 'count':
-                try:
-                    count = int(val)
-                    if count > 0:
-                        short = getattr(item, 'short', None)
-                        if short:
-                            args.extend([short] * count)
-                        else:
-                            args.extend([flag] * count)
-                except ValueError:
-                    pass
-                    
+            if not flag: continue
+            base_k = item.key
+            keys = [k for k in active_state if (k.split('__uid_')[0] if '__uid_' in k else k) == base_k]
+            for k in keys:
+                val = active_state.get(k)
+                if not val: continue
+                t = getattr(item, 'type', None)
+                if t == 'check' and val is True: args.append(flag)
+                elif t in ('entry','combo'): args += [flag, str(val).strip()]
+                elif t == 'multi':
+                    cleaned = ",".join(p.strip() for p in str(val).split(',') if p.strip())
+                    if cleaned: args += [flag, cleaned]
+                elif t in ('stack','text'):
+                    for line in [l.strip() for l in str(val).splitlines() if l.strip()]:
+                        args += [flag, line]
+                elif t == 'count':
+                    try:
+                        c = int(val)
+                        if c>0:
+                            s = getattr(item,'short',None)
+                            args.append(f"-{s[1]*c}" if s and s.startswith('-') and len(s)==2 else flag*c)
+                    except: pass
     return args
