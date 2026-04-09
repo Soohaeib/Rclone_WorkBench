@@ -1,9 +1,5 @@
-import os
-import json
-import time
-import threading
-import re
-import src.workbench_blueprint as workbench_blueprint
+import os, json, time, threading, re
+from src.workbench_blueprint import LOG_DIR
 
 # Standard Rclone ANSI escape sequences to clean terminal colors
 ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -41,7 +37,7 @@ def start_live_feed(profile: str, ui_callback):
     _active_tails[profile] = stop_event
 
     def _tailer():
-        path = os.path.join(workbench_blueprint.LOG_DIR, f"{profile}_sync.jsonl")
+        path = os.path.join(LOG_DIR, f"{profile}_sync.jsonl")
         last_pos = 0
         while not stop_event.is_set():
             if os.path.exists(path):

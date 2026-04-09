@@ -1,17 +1,18 @@
-import gi, os, subprocess, uuid
+import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib #type: ignore
+from typing import Callable
+import os, subprocess, uuid, shlex
 from src import config_manager, rules_engine, log_formatter, smart_automations
-import src.workbench_blueprint as blueprint
+from src.workbench_blueprint import LOG_DIR, TRASH_LOCAL_NAME, CONFIG_SCHEMA, SMART_SCHEMA
 
 class LiveOutputPanel:
-    """Manages profile logs with side tabs, live feed, reload and utility controls."""
     def __init__(self, remotes):
         self.container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.container.get_style_context().add_class("live-output-tab")
         self.notebook = Gtk.Notebook(); self.notebook.get_style_context().add_class("live-output-notebook")
         self.notebook.set_tab_pos(Gtk.PositionType.LEFT); self.container.pack_start(self.notebook, True, True, 0)
-        self.change_callback = None; self.tabs = {}
+        self.change_callback: Callable | None = None; self.tabs = {}
         for profile in remotes:
             vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); vbox.set_border_width(8)
             header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -33,8 +34,7 @@ class LiveOutputPanel:
         self.notebook.connect("switch-page", self._on_tab_switched)
 
     def _on_tab_switched(self, notebook, page, page_num):
-        if self.change_callback:
-            self.change_callback(notebook.get_tab_label(page).get_text().lower())
+        if self.change_callback: self.change_callback(notebook.get_tab_label(page).get_text().lower())
 
     def focus_profile(self, profile):
         if profile in self.tabs:
@@ -42,12 +42,12 @@ class LiveOutputPanel:
             if pn != -1: self.notebook.set_current_page(pn)
 
     def on_open_log_dir(self, profile):
-        if not os.path.exists(blueprint.LOG_DIR): os.makedirs(blueprint.LOG_DIR)
-        try: subprocess.Popen(['xdg-open', blueprint.LOG_DIR])
+        if not os.path.exists(LOG_DIR): os.makedirs(LOG_DIR)
+        try: subprocess.Popen(['xdg-open', LOG_DIR])
         except Exception: pass
 
     def on_delete_log(self, profile):
-        p = os.path.join(blueprint.LOG_DIR, f"{profile}_sync.jsonl")
+        p = os.path.join(LOG_DIR, f"{profile}_sync.jsonl")
         if os.path.exists(p):
             try: os.remove(p)
             except OSError: pass
@@ -57,7 +57,7 @@ class LiveOutputPanel:
         tab = self.tabs.get(profile)
         if not tab: return
         tab['buffer'].set_text("")
-        path = os.path.join(blueprint.LOG_DIR, f"{profile}_sync.jsonl")
+        path = os.path.join(LOG_DIR, f"{profile}_sync.jsonl")
         if os.path.exists(path):
             actions = []
             try:
@@ -127,7 +127,7 @@ class InventoryWorkbench:
         self.output_panel = LiveOutputPanel(self.remotes); self.output_panel.change_callback = self.sync_ui_to_log_tab
         live_output_hook.pack_start(self.output_panel.container, True, True, 0)
         self.category_combo.append_text("All Categories")
-        for cat in blueprint.CONFIG_SCHEMA.keys(): self.category_combo.append_text(cat)
+        for cat in CONFIG_SCHEMA.keys(): self.category_combo.append_text(cat)
         self.category_combo.set_active(0)
         for r in self.remotes: self.profile_combo.append_text(r)
         self.profile_combo.set_active(0)
@@ -148,7 +148,7 @@ class InventoryWorkbench:
 
     def setup_smart_presets(self):
         css = ""
-        for i in blueprint.SMART_SCHEMA.get("Smart Automations", []):
+        for i in SMART_SCHEMA.get("Smart Automations", []):
             h = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12); h.set_tooltip_text(i.desc); h.set_margin_start(8); h.set_margin_end(8)
             lbl = Gtk.Label(xalign=0); lbl.set_markup(f"<span foreground='{i.color}'><b>{i.label}</b></span>"); h.pack_start(lbl, True, True, 0)
             sw = Gtk.Switch(); sw.set_valign(Gtk.Align.CENTER)
@@ -179,13 +179,27 @@ class InventoryWorkbench:
         if self._updating_rules: return
         profile = self.profile_combo.get_active_text()
         if not profile: return
+        
         saved_path = self.global_cfg.get('local_paths', {}).get(profile, ""); current_path = self.path_entry.get_text()
         saved_remote_cfg = self.global_cfg.get('remote_configs', {}).get(profile, {})
         current_remote_cfg = {row.key: self.get_row_value(row) for row in self.can_list.get_children()}
         for k, s in self.smart_toggles.items():
             if s.get_active(): current_remote_cfg[k] = True
+            
         path_changed = saved_path != current_path
-        config_changed = any((saved_remote_cfg.get(k) or False) != (current_remote_cfg.get(k) or False) for k in (set(saved_remote_cfg.keys()) | set(current_remote_cfg.keys())))
+        config_changed = False
+        all_keys = set(saved_remote_cfg.keys()) | set(current_remote_cfg.keys())
+        
+        # Safe string comparison prevents false positives from int/string differences
+        for k in all_keys:
+            s_val = saved_remote_cfg.get(k)
+            c_val = current_remote_cfg.get(k)
+            s_norm = str(s_val).strip() if s_val not in [None, False] else ""
+            c_norm = str(c_val).strip() if c_val not in [None, False] else ""
+            if s_norm != c_norm:
+                config_changed = True
+                break
+                
         self.is_dirty = path_changed or config_changed
         self.status_label.set_markup("<span foreground='#e67e22'><b>[✗] Unsaved Changes</b></span>" if self.is_dirty else "<span foreground='#2ecc71'><b>[✓] Synced to Disk</b></span>")
         self.update_preview()
@@ -214,41 +228,49 @@ class InventoryWorkbench:
         if key == "preset_safe_trash" and switch.get_active():
             lp = self.path_entry.get_text()
             if lp and os.path.exists(lp):
-                try: os.makedirs(os.path.join(lp, blueprint.TRASH_LOCAL_NAME), exist_ok=True)
+                try: os.makedirs(os.path.join(lp, TRASH_LOCAL_NAME), exist_ok=True)
                 except Exception: pass
         fk, fv, lk = rules_engine.evaluate_state(self._gather_live_keys(), self.items_lookup)
         self._apply_new_state(fk, fv, lk); self.check_dirty()
 
-    def _apply_new_state(self, target_keys, forced_values, locked_keys):
+    def _apply_new_state(self, target_keys, values_dict, locked_keys):
         self._updating_rules = True
         display_keys = {k for k in target_keys if k not in self.smart_keys and (k.split('__uid_')[0] if '__uid_' in k else k) in self.items_lookup}
         current_rows = {r.key: r for r in self.can_list.get_children()}
+        
         for k in list(current_rows):
             if k not in display_keys:
                 self.can_list.remove(current_rows[k]); del current_rows[k]
+                
         for k in display_keys:
             base_k = k.split('__uid_')[0] if '__uid_' in k else k
             item = self.items_lookup[base_k]
             if k not in current_rows:
-                default_val = getattr(item, 'default', ""); val = forced_values.get(k, default_val)
-                new_row = self.create_canvas_card(k, val, is_locked=(k in locked_keys)); self.can_list.add(new_row); current_rows[k] = new_row
+                # Merge user values with schema defaults
+                val = values_dict.get(k, getattr(item, 'default', ""))
+                new_row = self.create_canvas_card(k, val, is_locked=(k in locked_keys))
+                self.can_list.add(new_row); current_rows[k] = new_row
+                
         for k, r in current_rows.items():
-            if k in forced_values: self.set_row_value(r, forced_values[k])
+            if k in values_dict: self.set_row_value(r, values_dict[k])
             is_locked = (k in locked_keys)
             if hasattr(r, 'input_widget') and r.input_widget: r.input_widget.set_sensitive(not is_locked)
             if hasattr(r, 'drop_btn'): r.drop_btn.set_visible(not is_locked)
-            if hasattr(r, 'split_btn') and getattr(self.items_lookup.get(k.split('__uid_')[0] if '__uid_' in k else k, {}), 'type', None) in ['text', 'stack']:
-                # keep split button visibility consistent with lock state
-                r.split_btn.set_visible(not is_locked and '__uid_' not in k)
+            
+            # The Split Button remains visible even if the input is locked, allowing unblocked clones
+            if hasattr(r, 'split_btn'):
+                r.split_btn.set_visible('__uid_' not in k)
+
         for k, btn in self.smart_toggles.items():
             if btn.get_active() != (k in target_keys): btn.set_active(k in target_keys)
+            
         self._updating_rules = False; self.refresh_inventory()
 
     def refresh_inventory(self):
         for c in self.inventory_container.get_children(): self.inventory_container.remove(c)
         search = self.search_entry.get_text().lower(); active_cat = self.category_combo.get_active_text()
         excluded = {r.key for r in self.can_list.get_children()}
-        for cat, items in blueprint.CONFIG_SCHEMA.items():
+        for cat, items in CONFIG_SCHEMA.items():
             if active_cat != "All Categories" and cat != active_cat: continue
             available = [i for i in items if i.key not in excluded and str(i.default_equipped) != "0" and (not search or search in f"{i.label} {i.key} {i.desc}".lower())]
             if not available: continue
@@ -260,33 +282,38 @@ class InventoryWorkbench:
         self.window.show_all()
 
     def update_preview(self):
-        profile = self.profile_combo.get_active_text() or "[PROFILE]"; local_path = self.path_entry.get_text() or "[LOCAL_PATH]"
+        profile = self.profile_combo.get_active_text() or "[PROFILE]"
+        local_path = self.path_entry.get_text() or "[LOCAL_PATH]"
+        
         live_state = {r.key: self.get_row_value(r) for r in self.can_list.get_children()}
         for k, btn in self.smart_toggles.items():
             if btn.get_active(): live_state[k] = True
+            
         active_keys = [k for k, v in live_state.items() if v is True or (isinstance(v, str) and v)]
         _, forced_values, _ = rules_engine.evaluate_state(active_keys, self.items_lookup)
+        
         preview_state = live_state.copy(); preview_state.update(forced_values)
-        import src.smart_logic_hooks as hooks
-        for k in active_keys:
-            base_k = k.split('__uid_')[0] if '__uid_' in k else k
-            item = self.items_lookup.get(base_k)
-            if item and getattr(item, 'python_hook', None):
-                hook_func = getattr(hooks, item.python_hook, None)
-                if hook_func: preview_state = hook_func(profile, local_path, f"{profile}:", preview_state)
+
         errors = rules_engine.validate_state(preview_state, self.items_lookup)
         if errors:
             self.preview_view.get_buffer().set_text("VALIDATION ERRORS:\n" + "\n".join([f"× {k}: {msg}" for k, msg in errors.items()]))
             self.preview_view.get_style_context().add_class("console-error")
             if getattr(self, 'apply_btn', None): self.apply_btn.set_sensitive(False)
             return
+            
         try:
             self.preview_view.get_style_context().remove_class("console-error")
-            args = config_manager.build_base_args(profile, self.global_cfg, preview_state)
-            safe_args = [f'"{a}"' if ' ' in str(a) else str(a) for a in args]
-            p1 = f'"{local_path}"' if ' ' in local_path else local_path
-            p2 = f"{profile}:"
+            
+            # Passed local_path here to render absolute paths for trash folders
+            args = config_manager.build_base_args(profile, self.global_cfg, preview_state, local_path)
+            
+            import shlex
+            safe_args = [shlex.quote(str(a)) for a in args]
+            p1 = shlex.quote(local_path)
+            p2 = shlex.quote(f"{profile}:")
+            
             cmd_str = f"rclone bisync {p1} {p2} {' '.join(safe_args)}"
+            
             self.preview_view.get_buffer().set_text(cmd_str)
             if getattr(self, 'apply_btn', None): self.apply_btn.set_sensitive(True)
         except Exception as e:
@@ -299,16 +326,30 @@ class InventoryWorkbench:
         profile = self.profile_combo.get_active_text()
         if not profile: return
         self._updating_rules = True
+        
         local_path = self.global_cfg.get('local_paths', {}).get(profile, ""); self.path_entry.set_text(local_path)
         prof_cfg = self.global_cfg.get('remote_configs', {}).get(profile, {})
+        
         active_keys = {k for k, v in prof_cfg.items() if v is True or (isinstance(v, str) and v)}
+        
         heuristics = smart_automations.scan_environment(local_path, profile)
         for rec in heuristics:
             item = self.items_lookup.get(rec)
             if item and getattr(item, "auto_apply", False): active_keys.add(rec)
-        fk, merged, lk = rules_engine.evaluate_state(active_keys, self.items_lookup)
-        self._apply_new_state(fk, merged, lk)
-        self._updating_rules = False; self.check_dirty()
+            
+        fk, forced_vals, lk = rules_engine.evaluate_state(active_keys, self.items_lookup)
+        
+        merged_state = prof_cfg.copy()
+        merged_state.update(forced_vals)
+        
+        self._apply_new_state(fk, merged_state, lk)
+        self._updating_rules = False
+        
+        self.is_dirty = False
+        self.status_label.set_markup("<span foreground='#2ecc71'><b>[✓] Synced to Disk</b></span>")
+        
+        # Added to immediately render preview on load
+        self.update_preview()
 
     def save_config(self, btn):
         profile = self.profile_combo.get_active_text()
@@ -322,7 +363,9 @@ class InventoryWorkbench:
 
     def create_chip(self, key):
         i = self.items_lookup[key]; lbl = Gtk.Label(); lbl.set_markup(f"<span foreground='{i.color}'><b>{i.label}</b></span>")
-        btn = Gtk.Button(); btn.add(lbl); btn.get_style_context().add_class("chip"); btn.connect("clicked", lambda _: self.equip_logic(key)); return btn
+        btn = Gtk.Button(); btn.add(lbl); btn.get_style_context().add_class("chip")
+        # Standard behavior: clicking inventory equips base tool
+        btn.connect("clicked", lambda _: self.equip_logic(key)); return btn
 
     def create_canvas_card(self, key, val=None, is_locked=False):
         base_key = key.split('__uid_')[0] if '__uid_' in key else key
@@ -332,14 +375,18 @@ class InventoryWorkbench:
         top = Gtk.Box(spacing=10)
         top.pack_start(Gtk.Label(label=f"<span foreground='{i.color}'><b>{i.label}</b></span>", use_markup=True, xalign=0), True, True, 0)
         item_type = getattr(i, 'type', None)
+            
+        drop = Gtk.Button(label="✕"); drop.connect("clicked", lambda _: self.unequip_logic(row)); top.pack_end(drop, False, False, 0); row.drop_btn = drop
+        card.pack_start(top, False, False, 0); row.input_widget = None
+        
+        # Split button exclusively attached to base component
         if item_type in ['text', 'stack'] and '__uid_' not in key:
             split_btn = Gtk.Button(label="+"); split_btn.set_tooltip_text("Split into an additional unblocked entry")
             def on_split(_):
                 uid_key = f"{base_key}__uid_{uuid.uuid4().hex[:6]}"
                 self.equip_logic(uid_key)
             split_btn.connect("clicked", on_split); top.pack_end(split_btn, False, False, 0); row.split_btn = split_btn
-        drop = Gtk.Button(label="✕"); drop.connect("clicked", lambda _: self.unequip_logic(row)); top.pack_end(drop, False, False, 0); row.drop_btn = drop
-        card.pack_start(top, False, False, 0); row.input_widget = None
+        
         if item_type == 'entry':
             row.input_widget = Gtk.Entry(text=str(val or "")); row.input_widget.connect("changed", self.check_dirty); card.pack_start(row.input_widget, False, False, 0)
         elif item_type == 'multi':
@@ -394,7 +441,7 @@ class InventoryWorkbench:
 
     def post_sync_cleanup(self, profile):
         prof_cfg = self.global_cfg.get('remote_configs', {}).get(profile, {}); changed = False
-        for i in blueprint.SMART_SCHEMA.get("Smart Automations", []):
+        for i in SMART_SCHEMA.get("Smart Automations", []):
             if getattr(i, "lifecycle", "persistent") == "one_time" and prof_cfg.get(i.key):
                 prof_cfg[i.key] = False; changed = True
         if changed:

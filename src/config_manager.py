@@ -1,5 +1,5 @@
 import os, json
-from src.workbench_blueprint import APP_DIR, JSON_CONFIG_FILE
+from src.workbench_blueprint import APP_DIR, JSON_CONFIG_FILE, CONFIG_SCHEMA
 
 def load_config():
     if not os.path.exists(JSON_CONFIG_FILE):
@@ -14,32 +14,49 @@ def save_config(cfg):
     with open(JSON_CONFIG_FILE, 'w') as f: json.dump(cfg, f, indent=4)
 
 def ensure_profile_exists(profile):
-    import src.workbench_blueprint as blueprint
     cfg = load_config()
     if profile not in cfg.get('remote_configs', {}):
         defaults = {item.key: getattr(item, 'default', "") if item.type != 'check' else False
-                    for section in blueprint.CONFIG_SCHEMA.values() for item in section}
+                    for section in CONFIG_SCHEMA.values() for item in section}
         cfg.setdefault('remote_configs', {})[profile] = defaults
         save_config(cfg)
     return cfg
 
-def build_base_args(profile, global_cfg, inferred_locks):
+def build_base_args(profile, global_cfg, inferred_locks, local_path=""):
+    """Translates state to CLI args. Dynamically maps absolute paths for Trash bins."""
     cfg = global_cfg.get('remote_configs', {}).get(profile, {})
     args = []
+    
+    active_state = cfg.copy()
+    active_state.update(inferred_locks)
+    
     import src.workbench_blueprint as blueprint
-    active_state = {**cfg, **inferred_locks}
-    for section in blueprint.CONFIG_SCHEMA.values():
+    import os
+
+    for section in CONFIG_SCHEMA.values():
         for item in section:
+            base_k = item.key
             flag = getattr(item, 'flag', None)
             if not flag: continue
-            base_k = item.key
+            
             keys = [k for k in active_state if (k.split('__uid_')[0] if '__uid_' in k else k) == base_k]
             for k in keys:
                 val = active_state.get(k)
-                if not val: continue
+                if val is None or val == "": 
+                    if val != 0: continue
+                
+                # --- DYNAMIC TRASH PATH RESOLUTION ---
+                if base_k == 'backup_path_1' and val == blueprint.TRASH_LOCAL_NAME:
+                    val = os.path.join(local_path, blueprint.TRASH_LOCAL_NAME) if local_path else blueprint.TRASH_LOCAL_NAME
+                elif base_k == 'backup_path_2' and val == blueprint.TRASH_CLOUD_NAME:
+                    val = f"{profile}:{blueprint.TRASH_CLOUD_NAME}"
+                # -------------------------------------
+                
                 t = getattr(item, 'type', None)
-                if t == 'check' and val is True: args.append(flag)
-                elif t in ('entry','combo'): args += [flag, str(val).strip()]
+                if t == 'check' and val is True: 
+                    args.append(flag)
+                elif t in ('entry','combo'): 
+                    args += [flag, str(val).strip()]
                 elif t == 'multi':
                     cleaned = ",".join(p.strip() for p in str(val).split(',') if p.strip())
                     if cleaned: args += [flag, cleaned]
@@ -49,8 +66,11 @@ def build_base_args(profile, global_cfg, inferred_locks):
                 elif t == 'count':
                     try:
                         c = int(val)
-                        if c>0:
+                        if c > 0:
                             s = getattr(item,'short',None)
-                            args.append(f"-{s[1]*c}" if s and s.startswith('-') and len(s)==2 else flag*c)
-                    except: pass
+                            if s and s.startswith('-') and len(s) == 2:
+                                args.append(f"-{s[1]*c}")
+                            else:
+                                args.extend([flag] * c)
+                    except ValueError: pass
     return args

@@ -2,8 +2,9 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Union
 
-APP_DIR = os.path.expanduser('~/Scripts/WorkBench')
+APP_DIR = os.path.expanduser('~/Scripts/Rclone_WorkBench')
 RCLONE_CONF_PATH = os.path.expanduser('~/.config/rclone/rclone.conf')
+RCLONE_CACHE_DIR = os.path.expanduser('~/.cache/rclone/bisync')
 JSON_CONFIG_FILE = os.path.join(APP_DIR, 'bisync_settings.json')
 LOG_DIR = os.path.join(APP_DIR, 'logs')
 
@@ -61,15 +62,16 @@ SMART_SCHEMA = {
             trigger_condition="always_on",
             lifecycle="persistent",
             auto_apply=False,
-            python_hook="setup_trash_bins",
             color="#2ecc71",
-            desc="Routes deleted files to dedicated trash bins with dynamic timestamps.",
+            desc="Routes deleted files to dedicated trash bins natively using Rclone's dynamic time tags.",
             expects=["backup_path_1", "backup_path_2", "filter", "conflict_suffix", "suffix", "suffix_keep_extension"],
             satisfy={
                 "backup_path_1": TRASH_LOCAL_NAME, 
                 "backup_path_2": TRASH_CLOUD_NAME, 
                 "filter": f"- {TRASH_LOCAL_NAME}/**\n- {TRASH_CLOUD_NAME}/**",
-                # The dynamic timestamps will be injected via python_hook during execution
+                "conflict_suffix": "_{2006-01-02_150405}.old",
+                "suffix": "_{2006-01-02_150405}.old",
+                "suffix_keep_extension": True
             }
         )
     ]

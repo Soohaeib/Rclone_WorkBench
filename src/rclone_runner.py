@@ -1,17 +1,17 @@
 import subprocess, os, signal, json, datetime
-import src.workbench_blueprint as blueprint
+from src.workbench_blueprint import LOG_DIR
 
 def run_sync_session(profile: str, args: list):
     """Executes rclone, forces JSON/INFO logging, and appends to log file in real-time."""
-    os.makedirs(blueprint.LOG_DIR, exist_ok=True)
-    log_path = os.path.join(blueprint.LOG_DIR, f"{profile}_sync.jsonl")
+    os.makedirs(LOG_DIR, exist_ok=True)
+    log_path = os.path.join(LOG_DIR, f"{profile}_sync.jsonl")
     
     cmd = ["rclone"] + args + ["-v", "--use-json-log", "--stats", "1s", "--stats-one-line"]
     
     # Append a session divider instead of clearing the log
     with open(log_path, "a", encoding="utf-8") as f:
         timestamp = datetime.datetime.now().isoformat()
-        divider = json.dumps({"time": timestamp, "level": "info", "msg": "━━━━━━━━━━━ NEW SYNC SESSION ━━━━━━━━━━━"})
+        divider = json.dumps({"time": timestamp, "level": "info", "msg": f"━━━━━━━━━━━ [{timestamp}] ━━━━━━━━━━━"})
         f.write(divider + "\n")
     
     process = subprocess.Popen(
@@ -28,7 +28,7 @@ def run_sync_session(profile: str, args: list):
     
     with open(log_path, "a", encoding="utf-8") as f:
         while True:
-            line = process.stdout.readline()
+            line = process.stdout.readline() if process.stdout else ""
             if not line and process.poll() is not None:
                 break
             if line:

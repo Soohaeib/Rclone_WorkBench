@@ -1,16 +1,15 @@
-import src.workbench_blueprint as workbench_blueprint
-import logging
+from src.workbench_blueprint import CONFIG_SCHEMA, SMART_SCHEMA
 
 def get_item_lookup():
     lookup = {}
-    for cat in workbench_blueprint.SMART_SCHEMA.values():
+    for cat in SMART_SCHEMA.values():
         for i in cat: lookup[i.key] = i  
-    for cat in workbench_blueprint.CONFIG_SCHEMA.values():
+    for cat in CONFIG_SCHEMA.values():
         for i in cat: lookup[i.key] = i  
     return lookup
 
 def get_smart_keys():
-    return {i.key for cat in workbench_blueprint.SMART_SCHEMA.values() for i in cat}
+    return {i.key for cat in SMART_SCHEMA.values() for i in cat}
 
 def validate_blueprint():
     lookup = get_item_lookup()
