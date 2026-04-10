@@ -1,4 +1,4 @@
-# The Workbench: A Linux Tray App for Rclone Bisync Management
+# Rclone Workbench: A Linux Tray App for Rclone Bisync Management
 
 This application provides a gamified, inventory-based framework for managing complex `rclone bisync` operations. It wraps rclone's powerful but intricate command-line interface into a safe, visual, and strictly validated GTK3 desktop experience, driven entirely by Type-Safe Python Dataclasses.
 

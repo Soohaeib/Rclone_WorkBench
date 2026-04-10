@@ -102,6 +102,10 @@ class InventoryWorkbench:
 
     def focus_profile(self, profile): self.main_stack.set_visible_child_name("page1"); self.output_panel.focus_profile(profile)
     def focus_workbench(self): self.main_stack.set_visible_child_name("page0")
+    
+    # NEW: Delegate status updates to the child LiveOutputPanel
+    def set_status(self, profile, is_running): self.output_panel.set_status(profile, is_running)
+    
     def show_all(self): self.window.show_all()
     def present(self): self.window.present()
     
@@ -173,7 +177,6 @@ class InventoryWorkbench:
             base_k = k.split('.')[0] if '.' in k else k
             item = self.items_lookup[base_k]
             if k not in current_rows:
-                # Delegate entirely to the Widget Factory
                 new_row = widget_factory.create_canvas_row(item, base_k, k, values_dict.get(k, getattr(item, 'default', "")), k in locked_keys, self.check_dirty, self.unequip_logic, self.equip_logic)
                 self.can_list.add(new_row); current_rows[k] = new_row
                 
@@ -199,7 +202,6 @@ class InventoryWorkbench:
                 grp = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
                 lbl = Gtk.Label(xalign=0); lbl.set_markup(f"<span color='#888' size='small'><b>{cat.upper()}</b></span>"); grp.pack_start(lbl, False, False, 0)
                 flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE)
-                # Delegate to factory
                 [flow.add(widget_factory.create_inventory_chip(i, i.key, self.equip_logic)) for i in available]
                 grp.pack_start(flow, False, False, 0); self.inventory_container.pack_start(grp, False, False, 0)
         self.window.show_all()
