@@ -1,12 +1,7 @@
 from src.workbench_blueprint import CONFIG_SCHEMA, SMART_SCHEMA
 
 def get_item_lookup():
-    lookup = {}
-    for cat in SMART_SCHEMA.values():
-        for i in cat: lookup[i.key] = i  
-    for cat in CONFIG_SCHEMA.values():
-        for i in cat: lookup[i.key] = i  
-    return lookup
+    return {i.key: i for schema in (SMART_SCHEMA, CONFIG_SCHEMA) for cat in schema.values() for i in cat}
 
 def get_smart_keys():
     return {i.key for cat in SMART_SCHEMA.values() for i in cat}
@@ -14,69 +9,42 @@ def get_smart_keys():
 def validate_blueprint():
     lookup = get_item_lookup()
     errors = []
-    for key, item in lookup.items():
-        expects = getattr(item, 'expects', [])
-        rejects = getattr(item, 'rejects', [])
-        satisfy = getattr(item, 'satisfy', {})
-        for e in expects:
-            if e not in lookup: errors.append(f"[{key}] expects missing: '{e}'")
-        for r in rejects:
-            if r not in lookup: errors.append(f"[{key}] rejects missing: '{r}'")
-        for s in satisfy.keys():
-            if s not in lookup: errors.append(f"[{key}] satisfies missing: '{s}'")
+    for k, i in lookup.items():
+        if any(e not in lookup for e in getattr(i, 'expects', [])): errors.append(f"[{k}] missing expected key")
+        if any(r not in lookup for r in getattr(i, 'rejects', [])): errors.append(f"[{k}] missing rejected key")
+        if any(s not in lookup for s in getattr(i, 'satisfy', {})): errors.append(f"[{k}] missing satisfied key")
     return errors
 
 def evaluate_state(active_keys, item_lookup):
-    final_keys = set(active_keys)
-    forced_values = {}
-    locked_keys = set()
-    changed = True
+    f_keys, f_vals, l_keys, changed = set(active_keys), {}, set(), True
 
     while changed:
         changed = False
-        current_snapshot = list(final_keys)
-        for key in current_snapshot:
-            base_key = key.split('__uid_')[0] if '__uid_' in key else key
-            item = item_lookup.get(base_key)
+        for key in list(f_keys):
+            base = key.split('.')[0] if '.' in key else key
+            item = item_lookup.get(base)
             if not item: continue
 
-            # 1. Process Rejects
+            # Rejects
             for r in getattr(item, 'rejects', []):
-                to_remove = [k for k in final_keys if (k.split('__uid_')[0] if '__uid_' in k else k) == r]
-                for tr in to_remove:
-                    final_keys.remove(tr)
-                    changed = True
+                for tr in [k for k in f_keys if (k.split('.')[0] if '.' in k else k) == r]:
+                    f_keys.remove(tr); changed = True
 
-            # 2. Process Expects (Adds the base key only)
+            # Expects & Satisfy
             for e in getattr(item, 'expects', []):
-                if not any((k.split('__uid_')[0] if '__uid_' in k else k) == e for k in final_keys):
-                    final_keys.add(e)
-                    changed = True
+                if not any((k.split('.')[0] if '.' in k else k) == e for k in f_keys):
+                    f_keys.add(e); changed = True
 
-            # 3. Process Satisfy
-            for target_key, forced_val in getattr(item, 'satisfy', {}).items():
-                if not any((k.split('__uid_')[0] if '__uid_' in k else k) == target_key for k in final_keys):
-                    final_keys.add(target_key)
-                    changed = True
-                if forced_values.get(target_key) != forced_val:
-                    forced_values[target_key] = forced_val
-                    locked_keys.add(target_key)
-                    changed = True
+            for tk, tv in getattr(item, 'satisfy', {}).items():
+                if not any((k.split('.')[0] if '.' in k else k) == tk for k in f_keys):
+                    f_keys.add(tk); changed = True
+                if f_vals.get(tk) != tv:
+                    f_vals[tk] = tv; l_keys.add(tk); changed = True
                     
-    return final_keys, forced_values, locked_keys
+    return f_keys, f_vals, l_keys
 
-def validate_state(live_state, item_lookup):
-    errors = {}
-    for key, val in live_state.items():
-        base_key = key.split('__uid_')[0] if '__uid_' in key else key
-        item = item_lookup.get(base_key)
-        
-        rules = getattr(item, 'validation', None)
-        if not rules: continue
-        
-        if 'min' in rules:
-            min_val = rules['min']
-            if str(val).endswith('m') and min_val.endswith('m'):
-                if int(str(val)[:-1]) < int(min_val[:-1]):
-                    errors[key] = f"Value must be at least {min_val}"
-    return errors
+def validate_state(live_state, lookup):
+    return {k: f"Must be at least {lookup[k.split('.')[0] if '.' in k else k].validation['min']}" 
+            for k, v in live_state.items() 
+            if getattr(lookup.get(k.split('.')[0] if '.' in k else k), 'validation', {}).get('min', '').endswith('m') 
+            and str(v).endswith('m') and int(str(v)[:-1]) < int(lookup[k.split('.')[0] if '.' in k else k].validation['min'][:-1])}

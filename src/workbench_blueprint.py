@@ -13,29 +13,17 @@ TRASH_CLOUD_NAME = '.rclone_trash_cloud'
 
 @dataclass
 class SmartPreset:
-    label: str
-    key: str
-    desc: str
-    color: str = "#3498db"
-    trigger_condition: str = "manual"
-    lifecycle: str = "persistent"
-    auto_apply: bool = False
-    python_hook: str = ""
+    label: str; key: str; desc: str; color: str = "#3498db"
+    trigger_condition: str = "manual"; lifecycle: str = "persistent"
+    auto_apply: bool = False; python_hook: str = ""
     expects: List[str] = field(default_factory=list)
     rejects: List[str] = field(default_factory=list)
     satisfy: Dict[str, Union[bool, str, int]] = field(default_factory=dict)
 
 @dataclass
 class ToolItem:
-    label: str
-    key: str
-    type: str
-    flag: str = ""
-    short: str = ""
-    desc: str = ""
-    color: str = "#ecf0f1"
-    default: Union[str, bool, int] = ""
-    default_equipped: bool = False
+    label: str; key: str; type: str; flag: str = ""; short: str = ""; desc: str = ""; color: str = "#ecf0f1"
+    default: Union[str, bool, int] = ""; default_equipped: bool = False
     options: List[str] = field(default_factory=list)
     expects: List[str] = field(default_factory=list)
     rejects: List[str] = field(default_factory=list)
@@ -45,33 +33,19 @@ class ToolItem:
 SMART_SCHEMA = {
     "Smart Automations": [
         SmartPreset(
-            label="Master Safe Resync",
-            key="preset_master_resync",
-            trigger_condition="missing_listing_file",
-            lifecycle="one_time",
-            auto_apply=False,
-            color="#e74c3c",
+            label="Master Safe Resync", key="preset_master_resync", trigger_condition="missing_listing_file", lifecycle="one_time", auto_apply=False, color="#e74c3c",
             desc="Automated baseline reconciliation for first runs or clearing critical lockouts.",
-            expects=["resync", "resync_mode", "resilient", "recover"],
-            rejects=["track_renames"],
+            expects=["resync", "resync_mode", "resilient", "recover"], rejects=["track_renames"],
             satisfy={"resync": True, "resync_mode": "newer", "resilient": True, "recover": True}
         ),
         SmartPreset(
-            label="Safe Trash Protection",
-            key="preset_safe_trash",
-            trigger_condition="always_on",
-            lifecycle="persistent",
-            auto_apply=False,
-            color="#2ecc71",
-            desc="Routes deleted files to dedicated trash bins natively using Rclone's dynamic time tags.",
+            label="Safe Trash Protection", key="preset_safe_trash", trigger_condition="always_on", lifecycle="persistent", auto_apply=False, color="#2ecc71",
+            python_hook="setup_trash_bins",
+            desc="Routes deleted files to dedicated trash bins with dynamic real-time timestamps.",
             expects=["backup_path_1", "backup_path_2", "filter", "conflict_suffix", "suffix", "suffix_keep_extension"],
             satisfy={
-                "backup_path_1": TRASH_LOCAL_NAME, 
-                "backup_path_2": TRASH_CLOUD_NAME, 
-                "filter": f"- {TRASH_LOCAL_NAME}/**\n- {TRASH_CLOUD_NAME}/**",
-                "conflict_suffix": "_{2006-01-02_150405}.old",
-                "suffix": "_{2006-01-02_150405}.old",
-                "suffix_keep_extension": True
+                "backup_path_1": TRASH_LOCAL_NAME, "backup_path_2": TRASH_CLOUD_NAME, "filter": f"- {TRASH_LOCAL_NAME}/**\n- {TRASH_CLOUD_NAME}/**",
+                "conflict_suffix": ".old", "suffix": ".old", "suffix_keep_extension": True
             }
         )
     ]

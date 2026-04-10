@@ -1,198 +1,95 @@
 #usr/bin/env python3
-import gi
-gi.require_version('Gtk', '3.0')
-gi.require_version('AppIndicator3', '0.1')
-gi.require_version('Notify', '0.7')
-from gi.repository import Gtk, GLib #type: ignore
-from gi.repository import AppIndicator3 #type: ignore
-from gi.repository import Notify #type: ignore
-import os, signal, threading, time, datetime, configparser
-from src import workbench_blueprint, config_manager, workbench_ui, rclone_runner, log_formatter
+import gi, os, signal, threading, time, datetime, configparser
+gi.require_version('Gtk', '3.0'); gi.require_version('AppIndicator3', '0.1'); gi.require_version('Notify', '0.7')
+from gi.repository import Gtk, GLib, AppIndicator3, Notify
+from src import workbench_blueprint, config_manager, workbench_ui, rclone_runner, log_formatter, rules_engine, smart_engine
 
 Notify.init("RClone Tray")
-
-def send_notification(title, message, is_error=False):
-    n = Notify.Notification.new(title, message, "dialog-error" if is_error else "emblem-synchronizing")
-    n.show()
+def notify(title, msg, err=False): Notify.Notification.new(title, msg, "dialog-error" if err else "emblem-synchronizing").show()
 
 class SyncThread(threading.Thread):
     def __init__(self, profile, path, app):
         super().__init__(daemon=True)
-        self.profile = profile
-        self.path = path
-        self.app = app
-        self.req = False
-        self.run_state = False
-        self.err = False
-        self.last = "Never"
-        self.proc = None
+        self.profile, self.path, self.app = profile, path, app
+        self.req, self.run_state, self.err, self.last, self.proc = False, False, False, "Never", None
 
-    def trigger_sync(self):
-        if not self.run_state:
-            self.req = True
+    def trigger_sync(self): self.req = True
 
     def run(self):
         while True:
-            if self.req:
-                self.req, self.run_state, self.err = False, True, False
-                GLib.idle_add(self.app.update_menu)
-                
-                if getattr(self.app, 'workbench', None) and hasattr(self.app.workbench, 'set_status'):
-                    self.app.workbench.set_status(self.profile, True)
-                
-                global_cfg = config_manager.load_config()
-                
-                from src import rules_engine
-                lookup = rules_engine.get_item_lookup()
-                prof_cfg = global_cfg.get('remote_configs', {}).get(self.profile, {})
-                active_keys = [k for k, v in prof_cfg.items() if v is True or (isinstance(v, str) and v)]
-                fk, fv, _ = rules_engine.evaluate_state(active_keys, lookup)
-                
-                run_state = prof_cfg.copy()
-                run_state.update(fv)
-                for k in fk:
-                    if k not in run_state: run_state[k] = True
-                
-                args = ['bisync', self.path, f'{self.profile}:']
-                
-                # Added self.path as the 4th argument
-                args.extend(config_manager.build_base_args(self.profile, global_cfg, run_state, self.path))
-                
-                res = rclone_runner.run_sync_session(self.profile, args)
-                self.proc = res.get("process")
-                self.last = datetime.datetime.now().strftime("%H:%M")
-                
-                if res.get("success"): 
-                    send_notification("Complete", f"{self.profile.upper()} :: Bisync Complete!")
-                    if getattr(self.app, 'workbench', None) and hasattr(self.app.workbench, 'post_sync_cleanup'):
-                        self.app.workbench.post_sync_cleanup(self.profile)
-                else: 
-                    self.err = True
-                    send_notification("Failed", f"{self.profile.upper()} :: Error Encountered!", True)
-                
-                self.run_state, self.proc = False, None
-                
-                if getattr(self.app, 'workbench', None) and hasattr(self.app.workbench, 'set_status'):
-                    self.app.workbench.set_status(self.profile, False)
-                
-                GLib.idle_add(self.app.update_menu)
-            else: 
-                time.sleep(1)
+            if not self.req: time.sleep(1); continue
+            self.req, self.run_state, self.err = False, True, False
+            GLib.idle_add(self.app.update_menu)
+            if self.app.workbench: self.app.workbench.set_status(self.profile, True)
+            
+            cfg = config_manager.load_config()
+            lookup = rules_engine.get_item_lookup()
+            p_cfg = cfg.get('remote_configs', {}).get(self.profile, {})
+            
+            fk, fv, _ = rules_engine.evaluate_state([k for k, v in p_cfg.items() if v is True or (isinstance(v, str) and v)], lookup)
+            run_state = {**p_cfg, **fv, **{k: True for k in fk if k not in p_cfg}}
+            
+            for k in fk:
+                if (b_k := k.split('.')[0] if '.' in k else k) in lookup and (hook := getattr(lookup[b_k], 'python_hook', None)):
+                    run_state = getattr(smart_engine, hook)(self.profile, self.path, f'{self.profile}:', run_state)
+            
+            args = ['bisync', self.path, f'{self.profile}:'] + config_manager.build_base_args(self.profile, cfg, run_state)
+            res = rclone_runner.run_sync_session(self.profile, args)
+            
+            self.last, self.err = datetime.datetime.now().strftime("%H:%M"), not res.get("success")
+            notify("Complete" if not self.err else "Failed", f"{self.profile.upper()} :: {'Complete' if not self.err else 'Error'}!", self.err)
+            
+            if not self.err and self.app.workbench: self.app.workbench.post_sync_cleanup(self.profile)
+            self.run_state, self.proc = False, None
+            if self.app.workbench: self.app.workbench.set_status(self.profile, False)
+            GLib.idle_add(self.app.update_menu)
 
 class RCloneWorkbenchApp:
     def __init__(self):
-        print("Initializing RClone Workbench Tray App...")
         signal.signal(signal.SIGINT, signal.SIG_DFL)
-
-        self.icon_name = "network-server"
-        self.threads = {}
-        self.workbench = None
-
-        self.rc = configparser.ConfigParser()
-        if not os.path.exists(workbench_blueprint.RCLONE_CONF_PATH):
-            send_notification("Error", "rclone.conf not found. Ensure rclone is configured.", True)
-            return
-
-        self.rc.read(workbench_blueprint.RCLONE_CONF_PATH)
-        remotes = self.rc.sections()
+        self.threads, self.workbench, self.rc = {}, None, configparser.ConfigParser()
         
-        if not remotes:
-            send_notification("Error", "No remotes found in rclone.conf.", True)
-            return
+        if not os.path.exists(workbench_blueprint.RCLONE_CONF_PATH) or not self.rc.read(workbench_blueprint.RCLONE_CONF_PATH) or not self.rc.sections():
+            notify("Error", "Valid rclone.conf not found or empty.", True); return
 
-        self.ind = AppIndicator3.Indicator.new(
-            "rclone_workbench_manager",
-            self.icon_name,
-            AppIndicator3.IndicatorCategory.APPLICATION_STATUS
-        )
+        self.ind = AppIndicator3.Indicator.new("rclone_tray", "network-server", AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
         self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
 
         cfg = config_manager.load_config()
-        for remote in remotes:
-            saved_path = cfg.get('local_paths', {}).get(remote)
-            local_path = saved_path if saved_path else f"/mnt/DataDrive/{remote}"
-            config_manager.ensure_profile_exists(remote)
-            thread = SyncThread(remote, local_path, self)
-            self.threads[remote] = thread
-            thread.start()
-
+        for r in self.rc.sections():
+            thread = SyncThread(r, cfg.get('local_paths', {}).get(r, f"/mnt/DataDrive/{r}"), self)
+            config_manager.ensure_profile_exists(r); self.threads[r] = thread; thread.start()
         self.update_menu()
 
     def update_menu(self):
-        menu = Gtk.Menu()
-        
-        for profile, thread in self.threads.items():
-            status_icon = "🔴" if thread.err else ("🔵" if thread.run_state else ("⚪" if thread.last == "Never" else "🟢"))
-            item = Gtk.MenuItem(label=f"{status_icon} {profile.upper():<12}")
-            submenu = Gtk.Menu()
+        m = Gtk.Menu()
+        for p, t in self.threads.items():
+            item = Gtk.MenuItem(label=f"{'🔴' if t.err else '🔵' if t.run_state else '⚪' if t.last == 'Never' else '🟢'} {p.upper():<12}")
+            sub = Gtk.Menu()
+            for lbl, cb, sens in [("Sync Now", lambda _, x=p: self.threads[x].trigger_sync(), not t.run_state),
+                                  ("Kill Process", lambda _, x=p: rclone_runner.kill_process(self.threads[x].proc), t.run_state),
+                                  ("Live Output", lambda _, x=p: self.show_live_output(x), True)]:
+                mi = Gtk.MenuItem(label=lbl); mi.connect('activate', cb); mi.set_sensitive(sens); sub.append(mi)
+            sub.append(Gtk.SeparatorMenuItem())
+            i = Gtk.MenuItem(label=f"Status: {'⚠️ ERR' if t.err else 'Syncing' if t.run_state else 'Ready':<10} | Last: {t.last}")
+            i.set_sensitive(False); sub.append(i); item.set_submenu(sub); m.append(item)
             
-            sync_item = Gtk.MenuItem(label="Sync Now")
-            sync_item.set_sensitive(not thread.run_state)
-            sync_item.connect('activate', lambda _, p=profile: self.threads[p].trigger_sync())
-            submenu.append(sync_item)
-            
-            kill_item = Gtk.MenuItem(label="Kill Process")
-            kill_item.set_sensitive(thread.run_state)
-            kill_item.connect('activate', lambda _, p=profile: rclone_runner.kill_process(self.threads[p].proc))
-            submenu.append(kill_item)
-            
-            out_item = Gtk.MenuItem(label="Live Output")
-            out_item.connect('activate', lambda _, p=profile: self.show_live_output(p))
-            submenu.append(out_item)
-            
-            submenu.append(Gtk.SeparatorMenuItem())
-            
-            status_text = "⚠️ ERR" if thread.err else ("Syncing" if thread.run_state else "Ready")
-            info = Gtk.MenuItem(label=f"Status: {status_text:<10} | Last: {thread.last}")
-            info.set_sensitive(False)
-            submenu.append(info)
-            
-            item.set_submenu(submenu)
-            menu.append(item)
-            
-        menu.append(Gtk.SeparatorMenuItem())
-        
-        item_config = Gtk.MenuItem(label="Inventory Workbench")
-        item_config.get_style_context().add_class("menu-action")
-        item_config.connect('activate', lambda _: self.open_workbench())
-        menu.append(item_config)
-        
-        item_quit = Gtk.MenuItem(label="Quit Application")
-        item_quit.get_style_context().add_class("menu-action")
-        item_quit.connect('activate', self.on_quit)
-        menu.append(item_quit)
-        
-        menu.show_all()
-        self.ind.set_menu(menu)
+        m.append(Gtk.SeparatorMenuItem())
+        for lbl, cb in [("Inventory Workbench", lambda _: self.open_workbench()), ("Quit Application", self.on_quit)]:
+            mi = Gtk.MenuItem(label=lbl); mi.get_style_context().add_class("menu-action"); mi.connect('activate', cb); m.append(mi)
+        m.show_all(); self.ind.set_menu(m)
 
     def open_workbench(self):
-        if not self.workbench:
-            profile_list = list(self.threads.keys())
-            self.workbench = workbench_ui.InventoryWorkbench(profile_list)
-        
-        if hasattr(self.workbench, 'focus_workbench'):
-            self.workbench.focus_workbench()
-            
-        self.workbench.show_all()
-        self.workbench.present()
-        return self.workbench
+        if not self.workbench: self.workbench = workbench_ui.InventoryWorkbench(list(self.threads.keys()))
+        if hasattr(self.workbench, 'focus_workbench'): self.workbench.focus_workbench()
+        self.workbench.show_all(); self.workbench.present(); return self.workbench
 
     def show_live_output(self, profile):
-        wb = self.open_workbench()
-        if hasattr(wb, 'focus_profile'):
-            wb.focus_profile(profile)
+        if hasattr(wb := self.open_workbench(), 'focus_profile'): wb.focus_profile(profile)
 
     def on_quit(self, _):
-        for thread in self.threads.values():
-            if thread.proc:
-                rclone_runner.kill_process(thread.proc)
-        
-        if self.workbench:
-            for profile in self.threads.keys():
-                log_formatter.stop_live_feed(profile)
-                
+        [rclone_runner.kill_process(t.proc) for t in self.threads.values() if t.proc]
+        if self.workbench: [log_formatter.stop_live_feed(p) for p in self.threads]
         Gtk.main_quit()
 
-if __name__ == "__main__":
-    app = RCloneWorkbenchApp()
-    Gtk.main()
+if __name__ == "__main__": RCloneWorkbenchApp(); Gtk.main()
