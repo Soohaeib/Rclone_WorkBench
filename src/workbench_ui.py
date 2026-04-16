@@ -33,7 +33,8 @@ class LiveOutputPanel:
             self.tabs[p] = {'vbox': vbox, 'status': status, 'buffer': tv.get_buffer(), 'tv': tv, 'sw': sw}
             log_formatter.start_live_feed(p, lambda a, x=p: GLib.idle_add(self.update_logs, x, a))
             
-        self.notebook.connect("switch-page", lambda n, _, __: self.change_callback(n.get_tab_label(n.get_nth_page(n.get_current_page())).get_text().lower()) if self.change_callback else None)
+        # FIX: We now use the `page` argument directly provided by GTK to get the exact target tab
+        self.notebook.connect("switch-page", lambda n, page, page_num: self.change_callback(n.get_tab_label(page).get_text()) if self.change_callback else None)
 
     def focus_profile(self, profile):
         if profile in self.tabs and (pn := self.notebook.page_num(self.tabs[profile]['vbox'])) != -1: self.notebook.set_current_page(pn)
@@ -62,7 +63,9 @@ class InventoryWorkbench:
         rules_engine.validate_blueprint()
         self.remotes, self.global_cfg = profiles, config_manager.load_config()
         self.items_lookup, self.smart_keys = rules_engine.get_item_lookup(), rules_engine.get_smart_keys()
-        self.is_dirty, self._updating_rules, self.smart_toggles = False, False, {}
+        
+        # FIX: Added self._is_syncing_profile traffic cop flag
+        self.is_dirty, self._updating_rules, self._is_syncing_profile, self.smart_toggles = False, False, False, {}
         
         self.builder = Gtk.Builder(); self.builder.add_from_file(os.path.join(os.path.dirname(__file__), "workbench.glade"))
         self.window = self.builder.get_object("main_window")
@@ -102,8 +105,6 @@ class InventoryWorkbench:
 
     def focus_profile(self, profile): self.main_stack.set_visible_child_name("page1"); self.output_panel.focus_profile(profile)
     def focus_workbench(self): self.main_stack.set_visible_child_name("page0")
-    
-    # NEW: Delegate status updates to the child LiveOutputPanel
     def set_status(self, profile, is_running): self.output_panel.set_status(profile, is_running)
     
     def show_all(self): self.window.show_all()
@@ -125,13 +126,24 @@ class InventoryWorkbench:
         p = Gtk.CssProvider(); p.load_from_data(css.encode()); Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), p, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
     def on_profile_changed(self, combo):
-        if profile := combo.get_active_text(): self.load_data(); self.output_panel.focus_profile(profile)
+        # FIX: Prevents infinite loop between combo box and notebook tab switching
+        if self._is_syncing_profile: return
+        if profile := combo.get_active_text(): 
+            self._is_syncing_profile = True
+            self.load_data()
+            self.output_panel.focus_profile(profile)
+            self._is_syncing_profile = False
 
     def sync_ui_to_log_tab(self, profile_name):
-        self.profile_combo.handler_block_by_func(self.on_profile_changed)
+        # FIX: Safely handles reverse-updates from the notebook back to the combo box
+        if self._is_syncing_profile: return
+        self._is_syncing_profile = True
         for i, row in enumerate(self.profile_combo.get_model()):
-            if row[0].lower() == profile_name.lower(): self.profile_combo.set_active(i); break
-        self.load_data(); self.profile_combo.handler_unblock_by_func(self.on_profile_changed)
+            if row[0].lower() == profile_name.lower(): 
+                self.profile_combo.set_active(i)
+                self.load_data()
+                break
+        self._is_syncing_profile = False
 
     def check_dirty(self):
         if self._updating_rules or not (p := self.profile_combo.get_active_text()): return
@@ -172,12 +184,23 @@ class InventoryWorkbench:
         
         for k in list(current_rows):
             if k not in display_keys: self.can_list.remove(current_rows.pop(k))
-                
+            
+        # --- NEW: Clone Enforcer Callback ---
+        def enforce_split(new_key, limit, base_k):
+            # Count existing clones on the canvas for this base key
+            current_clones = len([r for r in self.can_list.get_children() if r.key.split('.')[0] == base_k])
+            # The base card counts as 1. So if limit is 2, we can only have base + 1 clone.
+            if limit == -1 or current_clones < limit:
+                self.equip_logic(new_key)
+            else:
+                self.status_label.set_markup(f"<span foreground='#e74c3c'><b>Limit reached ({limit} max)</b></span>")
+
         for k in display_keys:
             base_k = k.split('.')[0] if '.' in k else k
             item = self.items_lookup[base_k]
             if k not in current_rows:
-                new_row = widget_factory.create_canvas_row(item, base_k, k, values_dict.get(k, getattr(item, 'default', "")), k in locked_keys, self.check_dirty, self.unequip_logic, self.equip_logic)
+                # Pass enforce_split to the factory
+                new_row = widget_factory.create_canvas_row(item, base_k, k, values_dict.get(k, getattr(item, 'default', "")), k in locked_keys, self.check_dirty, self.unequip_logic, enforce_split)
                 self.can_list.add(new_row); current_rows[k] = new_row
                 
         for k, r in current_rows.items():
@@ -198,7 +221,8 @@ class InventoryWorkbench:
         
         for cat, items in CONFIG_SCHEMA.items():
             if cat_filter != "All Categories" and cat != cat_filter: continue
-            if available := [i for i in items if i.key not in excluded and str(i.default_equipped) != "0" and (not search or search in f"{i.label} {i.key} {i.desc}".lower())]:
+            
+            if available := [i for i in items if i.key not in excluded and not getattr(i, 'hidden', False) and str(i.default_equipped) != "0" and (not search or search in f"{i.label} {i.key} {i.desc}".lower())]:
                 grp = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
                 lbl = Gtk.Label(xalign=0); lbl.set_markup(f"<span color='#888' size='small'><b>{cat.upper()}</b></span>"); grp.pack_start(lbl, False, False, 0)
                 flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE)
@@ -211,7 +235,8 @@ class InventoryWorkbench:
         live_state = {r.key: widget_factory.extract_value(r, getattr(self.items_lookup[r.key.split('.')[0] if '.' in r.key else r.key], 'type', 'check')) for r in self.can_list.get_children()}
         live_state.update({k: True for k, b in self.smart_toggles.items() if b.get_active()})
         
-        active_keys = [k for k, v in live_state.items() if v is True or (isinstance(v, str) and v)]
+        # FIX: Added (type(v) in [int, float]) to allow number/count widgets to survive the filter
+        active_keys = [k for k, v in live_state.items() if v is True or (isinstance(v, str) and v) or (type(v) in [int, float])]
         _, fv, _ = rules_engine.evaluate_state(active_keys, self.items_lookup)
         
         p_state = {**live_state, **fv}
@@ -240,7 +265,9 @@ class InventoryWorkbench:
         self.path_entry.set_text(lp)
         
         prof_cfg = self.global_cfg.get('remote_configs', {}).get(p, {})
-        active_keys = {k for k, v in prof_cfg.items() if v is True or (isinstance(v, str) and v)}
+        
+        # FIX: Same filter fix applied here for the initial load
+        active_keys = {k for k, v in prof_cfg.items() if v is True or (isinstance(v, str) and v) or (type(v) in [int, float])}
         active_keys.update(rec for rec in smart_engine.scan_environment(lp, p) if getattr(self.items_lookup.get(rec, object), "auto_apply", False))
             
         fk, fv, lk = rules_engine.evaluate_state(active_keys, self.items_lookup)
@@ -249,7 +276,7 @@ class InventoryWorkbench:
         self._updating_rules, self.is_dirty = False, False
         self.status_label.set_markup("<span foreground='#2ecc71'><b>[✓] Synced to Disk</b></span>")
         self.update_preview()
-
+        
     def save_config(self, btn):
         if not (p := self.profile_combo.get_active_text()): return
         new_cfg = {r.key: widget_factory.extract_value(r, getattr(self.items_lookup[r.key.split('.')[0] if '.' in r.key else r.key], 'type', 'check')) for r in self.can_list.get_children()}

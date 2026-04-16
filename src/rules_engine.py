@@ -44,7 +44,30 @@ def evaluate_state(active_keys, item_lookup):
     return f_keys, f_vals, l_keys
 
 def validate_state(live_state, lookup):
-    return {k: f"Must be at least {lookup[k.split('.')[0] if '.' in k else k].validation['min']}" 
-            for k, v in live_state.items() 
-            if getattr(lookup.get(k.split('.')[0] if '.' in k else k), 'validation', {}).get('min', '').endswith('m') 
-            and str(v).endswith('m') and int(str(v)[:-1]) < int(lookup[k.split('.')[0] if '.' in k else k].validation['min'][:-1])}
+    errors = {}
+    
+    # 1. Catch dynamic Audit Errors injected by Python Hooks
+    for k, v in live_state.items():
+        if k.startswith('_AUDIT_ERROR'):
+            clean_key = k.replace('_AUDIT_ERROR_', 'Audit Failure (') + ')'
+            errors[clean_key] = str(v)
+            
+    # 2. Standard Math Validations
+    for k, v in live_state.items():
+        base_key = k.split('.')[0] if '.' in k else k
+        item = lookup.get(base_key)
+        if not item or not getattr(item, 'validation', None): continue
+        
+        rules = item.validation
+        if isinstance(rules, dict):
+            # Try to validate numerically. If it fails (e.g., it's a string from another widget type), skip it safely.
+            try:
+                num_v = float(v)
+                if 'min' in rules and num_v < rules['min']:
+                    errors[k] = f"Value {v} is below minimum of {rules['min']}."
+                if 'max' in rules and num_v > rules['max']:
+                    errors[k] = f"Value {v} is above maximum of {rules['max']}."
+            except (ValueError, TypeError):
+                pass
+                
+    return errors

@@ -26,16 +26,31 @@ def build_base_args(profile, global_cfg, inferred_locks):
             flag = getattr(item, 'flag', None)
             if not flag: continue
             
+            # Universal Short Flag Priority
+            cmd_flag = getattr(item, 'short', None) or flag
+            
             for k in [x for x in state if (x.split('.')[0] if '.' in x else x) == item.key]:
                 val = state.get(k)
                 if not val and val != 0: continue
                 
                 t = getattr(item, 'type', None)
-                if t == 'check' and val is True: args.append(flag)
-                elif t in ('entry','combo'): args += [flag, str(val).strip()]
-                elif t == 'multi' and (c := ",".join(p.strip() for p in str(val).split(',') if p.strip())): args += [flag, c]
-                elif t in ('stack','text'): args += [x for line in str(val).splitlines() if line.strip() for x in (flag, line.strip())]
-                elif t == 'count' and (c := int(val)) > 0:
-                    s = getattr(item,'short',None)
-                    args.append(f"-{s[1]*c}" if s and s.startswith('-') and len(s) == 2 else flag*c)
+                
+                if t == 'check' and val is True: 
+                    args.append(cmd_flag)
+                elif t == 'multi' and (c := ",".join(p.strip() for p in str(val).split(',') if p.strip())): 
+                    args += [cmd_flag, c]
+                elif t == 'combo' and str(val).strip(): 
+                    args += [cmd_flag, str(val).strip()]
+                elif t == 'text': 
+                    args += [x for line in str(val).splitlines() if line.strip() for x in (cmd_flag, line.strip())]
+                elif t == 'entry' and str(val).strip():
+                    args += [cmd_flag, str(val).strip()]
+                elif t == 'number' and int(val) > 0: 
+                    # Natively appends the unit, e.g. "2" + "m" -> "2m"
+                    unit = getattr(item, 'unit', '')
+                    args += [cmd_flag, f"{val}{unit}"]
+                elif t == 'count' and int(val) > 0:
+                    # Repeats the flag X times (e.g., -v -v -v)
+                    args.extend([cmd_flag] * int(val))
+                    
     return args

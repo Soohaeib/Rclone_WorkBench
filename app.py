@@ -17,33 +17,72 @@ class SyncThread(threading.Thread):
 
     def run(self):
         while True:
-            if not self.req: time.sleep(1); continue
+            if not self.req: 
+                time.sleep(1)
+                continue
+                
             self.req, self.run_state, self.err = False, True, False
             GLib.idle_add(self.app.update_menu)
-            if self.app.workbench: self.app.workbench.set_status(self.profile, True)
+            if self.app.workbench: 
+                self.app.workbench.set_status(self.profile, True)
             
+            # 1. Load configuration and lookup
             cfg = config_manager.load_config()
             lookup = rules_engine.get_item_lookup()
-            p_cfg = cfg.get('remote_configs', {}).get(self.profile, {})
+            live_state = cfg.get('remote_configs', {}).get(self.profile, {}).copy()
+            local_path = cfg.get('local_paths', {}).get(self.profile, '')
+            remote_path = live_state.get('remote_path', '')
             
-            fk, fv, _ = rules_engine.evaluate_state([k for k, v in p_cfg.items() if v is True or (isinstance(v, str) and v)], lookup)
-            run_state = {**p_cfg, **fv, **{k: True for k in fk if k not in p_cfg}}
+            # 2. POWERING B: Run the Audit
+            live_state = smart_engine.audit_resync_environment(
+                self.profile, local_path, remote_path, live_state
+            )
             
-            for k in fk:
-                if (b_k := k.split('.')[0] if '.' in k else k) in lookup and (hook := getattr(lookup[b_k], 'python_hook', None)):
-                    run_state = getattr(smart_engine, hook)(self.profile, self.path, f'{self.profile}:', run_state)
+            # 3. TEST C RESOLUTION: Check for Blockers
+            audit_errors = [v for k, v in live_state.items() if k.startswith('_AUDIT_ERROR')]
             
-            args = ['bisync', self.path, f'{self.profile}:'] + config_manager.build_base_args(self.profile, cfg, run_state)
-            res = rclone_runner.run_sync_session(self.profile, args)
-            
-            self.last, self.err = datetime.datetime.now().strftime("%H:%M"), not res.get("success")
-            notify("Complete" if not self.err else "Failed", f"{self.profile.upper()} :: {'Complete' if not self.err else 'Error'}!", self.err)
-            
-            if not self.err and self.app.workbench: self.app.workbench.post_sync_cleanup(self.profile)
-            self.run_state, self.proc = False, None
-            if self.app.workbench: self.app.workbench.set_status(self.profile, False)
-            GLib.idle_add(self.app.update_menu)
+            if audit_errors:
+                self.err = True
+                self.run_state = False
+                self.last = "Blocked"
+                error_msg = audit_errors[0]
+                GLib.idle_add(notify, f"Sync Blocked: {self.profile}", error_msg, True)
+                GLib.idle_add(self.app.update_menu)
+                if self.app.workbench: 
+                    self.app.workbench.set_status(self.profile, False)
+                continue # Abort the sync before rclone even starts
 
+            # 4. Preparation side-effects (Dynamic Trash Bin timestamps)
+            if hasattr(smart_engine, 'setup_trash_bins'):
+                live_state = smart_engine.setup_trash_bins(self.profile, local_path, remote_path, live_state)
+                
+            # 5. Execution
+            args = config_manager.build_base_args(self.profile, cfg, live_state)
+            res = rclone_runner.run_sync_session(self.profile, args)
+
+            # 6. Post-Sync Wrap-up & UI Reset
+            self.run_state = False
+            self.err = not res.get("success", False)
+            self.last = datetime.datetime.now().strftime("%H:%M:%S")
+            self.proc = None
+            
+            if self.app.workbench:
+                self.app.workbench.set_status(self.profile, False)
+                # Cleanup one-time flags (like --resync) after success
+                if not self.err:
+                    self.app.workbench.post_sync_cleanup(self.profile)
+                    
+                    # Save Filter Hash post-sync for Prerequisite 2
+                    import hashlib
+                    f_txt = "\n".join([v for k, v in live_state.items() if k.startswith('filter') and isinstance(v, str)])
+                    if f_txt:
+                        tracker = os.path.join(workbench_blueprint.APP_DIR, f"{self.profile}_filter_state.md5")
+                        try:
+                            with open(tracker, 'w') as f: f.write(hashlib.md5(f_txt.encode()).hexdigest())
+                        except Exception: pass
+            
+            GLib.idle_add(self.app.update_menu)
+            
 class RCloneWorkbenchApp:
     def __init__(self):
         signal.signal(signal.SIGINT, signal.SIG_DFL)

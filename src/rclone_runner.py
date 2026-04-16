@@ -43,6 +43,10 @@ def run_sync_session(profile: str, args: list):
     }
 
 def kill_process(process):
+    """Sends SIGINT for a graceful rclone shutdown. Clicking it twice forces an abort."""
     if process and process.poll() is None:
-        try: os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-        except: pass
+        try: 
+            # Changed SIGTERM to SIGINT to mimic Ctrl+C
+            os.killpg(os.getpgid(process.pid), signal.SIGINT)
+        except Exception: 
+            pass
