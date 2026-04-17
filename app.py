@@ -53,11 +53,17 @@ class SyncThread(threading.Thread):
                 continue # Abort the sync before rclone even starts
 
             # 4. Preparation side-effects (Dynamic Trash Bin timestamps)
-            if hasattr(smart_engine, 'setup_trash_bins'):
+            # FIX: Only run the trash setup if the user actually equipped the Local Trash card
+            if 'backup_path_1' in live_state and hasattr(smart_engine, 'setup_trash_bins'):
                 live_state = smart_engine.setup_trash_bins(self.profile, local_path, remote_path, live_state)
                 
             # 5. Execution
-            args = config_manager.build_base_args(self.profile, cfg, live_state)
+            flags = config_manager.build_base_args(self.profile, cfg, live_state)
+            
+            # FIX: Explicitly inject the 'bisync' command and the two paths before the flags
+            remote_full = f"{self.profile}:{remote_path}" if remote_path else f"{self.profile}:"
+            args = ["bisync", local_path, remote_full] + flags
+            
             res = rclone_runner.run_sync_session(self.profile, args)
 
             # 6. Post-Sync Wrap-up & UI Reset
