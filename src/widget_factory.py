@@ -2,26 +2,55 @@ import gi, uuid
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk
 
-def create_inventory_chip(item, item_id, equip_callback):
-    lbl = Gtk.Label(); lbl.set_markup(f"<span foreground='{item.color}'><b>{item.label}</b></span>")
+def create_inventory_chip(item, item_id, equip_callback, disabled_keys=None):
+    if disabled_keys is None: disabled_keys = {}
+    is_disabled = item_id in disabled_keys
+    
+    markup = f"<span foreground='{item.color}'><b>{item.label}</b></span>"
+    if is_disabled: markup = f"<span foreground='grey' strikethrough='true'>{item.label}</span>"
+
+    lbl = Gtk.Label(); lbl.set_markup(markup)
     btn = Gtk.Button(); btn.add(lbl); btn.get_style_context().add_class("chip")
-    if item.desc: btn.set_tooltip_markup(item.desc)
-    btn.connect("clicked", lambda _: equip_callback(item_id))
+    
+    if is_disabled:
+        locker_name = disabled_keys.get(item_id, "current configuration")
+        btn.set_tooltip_markup(f"<span color='orange'>Locked by {locker_name}</span>")
+        btn.set_sensitive(False)
+    elif item.desc: 
+        btn.set_tooltip_markup(item.desc)
+        
+    if not is_disabled: btn.connect("clicked", lambda _: equip_callback(item_id))
     return btn
 
 def apply_locks(row, item_type, lock_state):
-    if lock_state is True:
-        if hasattr(row, 'input_widget') and row.input_widget: row.input_widget.set_sensitive(False)
-        if hasattr(row, 'drop_btn'): row.drop_btn.set_visible(False)
+    """Dynamically grays out widgets and assigns tooltips based on Macro (String) or Micro (Dict) locks."""
+    is_locked = bool(lock_state)
+    
+    if hasattr(row, 'drop_btn'):
+        row.drop_btn.set_visible(not is_locked)
+        row.drop_btn.set_sensitive(not is_locked)
+
+    if isinstance(lock_state, str): # Full Macro Lock (lock_state is the Locker's Label)
+        if hasattr(row, 'input_widget') and row.input_widget: 
+            row.input_widget.set_sensitive(False)
+            row.input_widget.set_tooltip_text(f"Locked by {lock_state}")
+        return
+
+    if isinstance(lock_state, dict) and item_type == 'multi' and hasattr(row, 'checkboxes'):
+        if hasattr(row, 'input_widget') and row.input_widget: 
+            row.input_widget.set_sensitive(True)
+            
+        for opt, chk in row.checkboxes.items():
+            if opt in lock_state:
+                chk.set_sensitive(False)
+                chk.set_tooltip_text(f"Locked by {lock_state[opt]}")
+            else:
+                chk.set_sensitive(True)
+                chk.set_tooltip_text("")
     else:
-        if hasattr(row, 'input_widget') and row.input_widget: row.input_widget.set_sensitive(True)
-        if hasattr(row, 'drop_btn'): row.drop_btn.set_visible(True)
-        
-        if isinstance(lock_state, list) and lock_state:
-            if hasattr(row, 'drop_btn'): row.drop_btn.set_visible(False)
-            if item_type == 'multi' and hasattr(row, 'checkboxes'):
-                for opt, chk in row.checkboxes.items():
-                    chk.set_sensitive(opt not in lock_state)
+        if hasattr(row, 'input_widget') and row.input_widget:
+            row.input_widget.set_sensitive(not is_locked)
+            row.input_widget.set_tooltip_text("")
 
 def create_canvas_row(item, base_key, row_key, val, lock_state, cb_change, cb_unequip, cb_split):
     row = Gtk.ListBoxRow(); row.key = row_key; row.set_activatable(False); row.set_selectable(False)

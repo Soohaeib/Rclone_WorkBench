@@ -141,39 +141,34 @@ class InventoryWorkbench:
                 break
         self._is_syncing_profile = False
 
-    def check_dirty(self):
-        if self._updating_rules or not (p := self.profile_combo.get_active_text()): return
-        s_cfg = self.global_cfg.get('remote_configs', {}).get(p, {})
-        c_cfg = {r.key: widget_factory.extract_value(r, getattr(self.items_lookup[r.key.split('.')[0] if '.' in r.key else r.key], 'type', 'check')) for r in self.can_list.get_children()}
-        c_cfg.update({k: True for k, s in self.smart_toggles.items() if s.get_active()})
-        
-        self.is_dirty = (self.global_cfg.get('local_paths', {}).get(p, "") != self.path_entry.get_text()) or any(
-            (str(s_cfg.get(k)).strip() if s_cfg.get(k) not in [None, False] else "") != 
-            (str(c_cfg.get(k)).strip() if c_cfg.get(k) not in [None, False] else "") for k in set(s_cfg) | set(c_cfg))
-            
-        self.status_label.set_markup("<span foreground='#e67e22'><b>[✗] Unsaved Changes</b></span>" if self.is_dirty else "<span foreground='#2ecc71'><b>[✓] Synced to Disk</b></span>")
-        self.update_preview()
-
     def _gather_live_keys(self):
         return [r.key for r in self.can_list.get_children()] + [k for k, b in self.smart_toggles.items() if b.get_active() and k not in [r.key for r in self.can_list.get_children()]]
 
+    def _gather_raw_values(self):
+        # Helper to grab the user's current canvas inputs
+        vals = {r.key: widget_factory.extract_value(r, getattr(self.items_lookup[r.key.split('.')[0] if '.' in r.key else r.key], 'type', 'check')) for r in self.can_list.get_children()}
+        vals.update({k: True for k, b in self.smart_toggles.items() if b.get_active()})
+        return vals
+
     def equip_logic(self, item_id):
-        fk, fv, lk = rules_engine.evaluate_state(self._gather_live_keys() + [item_id] if item_id not in self._gather_live_keys() else self._gather_live_keys(), self.items_lookup)
-        self._apply_new_state(fk, fv, lk); self.check_dirty()
+        raw_keys = self._gather_live_keys()
+        if item_id not in raw_keys: raw_keys.append(item_id)
+        fk, fv, lk, dk = rules_engine.evaluate_state(raw_keys, self._gather_raw_values(), self.items_lookup)
+        self._apply_new_state(fk, fv, lk, dk); self.check_dirty()
 
     def unequip_logic(self, row):
-        fk, fv, lk = rules_engine.evaluate_state([k for k in self._gather_live_keys() if k != row.key], self.items_lookup)
-        self._apply_new_state(fk, fv, lk); self.check_dirty()
+        fk, fv, lk, dk = rules_engine.evaluate_state([k for k in self._gather_live_keys() if k != row.key], self._gather_raw_values(), self.items_lookup)
+        self._apply_new_state(fk, fv, lk, dk); self.check_dirty()
 
     def on_smart_preset_toggled(self, switch, pspec, item_id):
         if self._updating_rules: return
         if item_id == "preset_safe_trash" and switch.get_active() and (lp := self.path_entry.get_text()) and os.path.exists(lp):
             try: os.makedirs(os.path.join(lp, TRASH_LOCAL_NAME), exist_ok=True)
             except: pass
-        fk, fv, lk = rules_engine.evaluate_state(self._gather_live_keys(), self.items_lookup)
-        self._apply_new_state(fk, fv, lk); self.check_dirty()
+        fk, fv, lk, dk = rules_engine.evaluate_state(self._gather_live_keys(), self._gather_raw_values(), self.items_lookup)
+        self._apply_new_state(fk, fv, lk, dk); self.check_dirty()
 
-    def _apply_new_state(self, target_keys, values_dict, locked_keys):
+    def _apply_new_state(self, target_keys, values_dict, locked_keys, disabled_keys):
         self._updating_rules = True
         display_keys = {k for k in target_keys if k not in self.smart_keys and (k.split('.')[0] if '.' in k else k) in self.items_lookup}
         current_rows = {r.key: r for r in self.can_list.get_children()}
@@ -205,9 +200,11 @@ class InventoryWorkbench:
         for k, btn in self.smart_toggles.items():
             if btn.get_active() != (k in target_keys): btn.set_active(k in target_keys)
             
-        self._updating_rules = False; self.refresh_inventory()
+        self._updating_rules = False
+        self.refresh_inventory(disabled_keys)
 
-    def refresh_inventory(self):
+    def refresh_inventory(self, disabled_keys=None):
+        if disabled_keys is None: disabled_keys = set()
         [self.inventory_container.remove(c) for c in self.inventory_container.get_children()]
         search, cat_filter = self.search_entry.get_text().lower(), self.category_combo.get_active_text()
         excluded = {r.key for r in self.can_list.get_children()}
@@ -219,25 +216,37 @@ class InventoryWorkbench:
                 grp = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
                 lbl = Gtk.Label(xalign=0); lbl.set_markup(f"<span color='#888' size='small'><b>{cat.upper()}</b></span>"); grp.pack_start(lbl, False, False, 0)
                 flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE)
-                [flow.add(widget_factory.create_inventory_chip(i, i.flag, self.equip_logic)) for i in available]
+                # Pass disabled_keys into the factory so it can gray out locked options
+                [flow.add(widget_factory.create_inventory_chip(i, i.flag, self.equip_logic, disabled_keys=disabled_keys)) for i in available]
                 grp.pack_start(flow, False, False, 0); self.inventory_container.pack_start(grp, False, False, 0)
         self.window.show_all()
 
+    def check_dirty(self):
+        if self._updating_rules or not (p := self.profile_combo.get_active_text()): return
+        s_cfg = self.global_cfg.get('remote_configs', {}).get(p, {})
+        c_cfg = self._gather_raw_values()
+        
+        self.is_dirty = (self.global_cfg.get('local_paths', {}).get(p, "") != self.path_entry.get_text()) or any(
+            (str(s_cfg.get(k)).strip() if s_cfg.get(k) not in [None, False] else "") != 
+            (str(c_cfg.get(k)).strip() if c_cfg.get(k) not in [None, False] else "") for k in set(s_cfg) | set(c_cfg))
+            
+        self.status_label.set_markup("<span foreground='#e67e22'><b>[✗] Unsaved Changes</b></span>" if self.is_dirty else "<span foreground='#2ecc71'><b>[✓] Synced to Disk</b></span>")
+        self.update_preview()
+        
     def update_preview(self):
         p, lp = self.profile_combo.get_active_text() or "[PROFILE]", self.path_entry.get_text() or "[LOCAL_PATH]"
-        live_state = {r.key: widget_factory.extract_value(r, getattr(self.items_lookup[r.key.split('.')[0] if '.' in r.key else r.key], 'type', 'check')) for r in self.can_list.get_children()}
-        live_state.update({k: True for k, b in self.smart_toggles.items() if b.get_active()})
+        raw_vals = self._gather_raw_values()
         
-        active_keys = [k for k, v in live_state.items() if v is True or (isinstance(v, str) and v) or (type(v) in [int, float])]
-        _, fv, _ = rules_engine.evaluate_state(active_keys, self.items_lookup)
+        active_keys = [k for k, v in raw_vals.items() if v is True or (isinstance(v, str) and v) or (type(v) in [int, float])]
+        _, fv, _, _ = rules_engine.evaluate_state(active_keys, raw_vals, self.items_lookup)
         
-        p_state = {**live_state, **fv}
+        p_state = {**raw_vals, **fv}
         for k in active_keys:
             if (item := self.items_lookup.get(k.split('.')[0] if '.' in k else k)) and (hk := getattr(item, 'python_hook', None)) and hasattr(smart_engine, hk):
                 p_state = getattr(smart_engine, hk)(p, lp, f"{p}:", p_state)
 
         if errors := rules_engine.validate_state(p_state, self.items_lookup):
-            self.preview_view.get_buffer().set_text("VALIDATION ERRORS:\n" + "\n".join([f"× {k}: {msg}" for k, msg in errors.items()]))
+            self.preview_view.get_buffer().set_text("VALIDATION ERRORS:\n" + "\n".join([f"[X] {k}: {msg}" for k, msg in errors.items()]))
             self.preview_view.get_style_context().add_class("console-error")
             if hasattr(self, 'apply_btn'): self.apply_btn.set_sensitive(False)
             return
@@ -261,8 +270,8 @@ class InventoryWorkbench:
         active_keys = {k for k, v in prof_cfg.items() if v is True or (isinstance(v, str) and v) or (type(v) in [int, float])}
         active_keys.update(rec for rec in smart_engine.scan_environment(lp, p) if getattr(self.items_lookup.get(rec, object), "auto_apply", False))
             
-        fk, fv, lk = rules_engine.evaluate_state(active_keys, self.items_lookup)
-        self._apply_new_state(fk, {**prof_cfg, **fv}, lk)
+        fk, fv, lk, dk = rules_engine.evaluate_state(list(active_keys), prof_cfg, self.items_lookup)
+        self._apply_new_state(fk, {**prof_cfg, **fv}, lk, dk)
         
         self._updating_rules, self.is_dirty = False, False
         self.status_label.set_markup("<span foreground='#2ecc71'><b>[✓] Synced to Disk</b></span>")
@@ -279,6 +288,13 @@ class InventoryWorkbench:
     def post_sync_cleanup(self, profile):
         p_cfg = self.global_cfg.get('remote_configs', {}).get(profile, {})
         if any(p_cfg.pop(i.id, None) for i in SMART_SCHEMA.get("Smart Automations", []) if getattr(i, "lifecycle", "persistent") == "one_time" and p_cfg.get(i.id)):
-            fk, merged, lk = rules_engine.evaluate_state([k for k, v in p_cfg.items() if v is True or (isinstance(v, str) and v)], self.items_lookup)
-            self.global_cfg['remote_configs'][profile] = merged; config_manager.save_config(self.global_cfg)
-            if self.profile_combo.get_active_text() == profile: self._apply_new_state(fk, merged, lk)
+            # Safely gather keys, including numbers/counts
+            active_keys = [k for k, v in p_cfg.items() if v is True or (isinstance(v, str) and v) or (type(v) in [int, float])]
+            
+            # FIX: Pass p_cfg as the required active_values argument
+            fk, merged, lk, dk = rules_engine.evaluate_state(active_keys, p_cfg, self.items_lookup)
+            
+            self.global_cfg['remote_configs'][profile] = merged
+            config_manager.save_config(self.global_cfg)
+            if self.profile_combo.get_active_text() == profile: 
+                self._apply_new_state(fk, merged, lk, dk)

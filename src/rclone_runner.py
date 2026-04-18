@@ -8,7 +8,6 @@ def run_sync_session(profile: str, args: list):
     
     cmd = ["rclone"] + args + ["-v", "--use-json-log", "--stats", "1s", "--stats-one-line"]
     
-    # Append a session divider instead of clearing the log
     with open(log_path, "a", encoding="utf-8") as f:
         timestamp = datetime.datetime.now().isoformat()
         divider = json.dumps({"time": timestamp, "level": "info", "msg": f"━━━━━━━━━━━ [{timestamp}] ━━━━━━━━━━━"})
@@ -43,10 +42,9 @@ def run_sync_session(profile: str, args: list):
     }
 
 def kill_process(process):
-    """Sends SIGINT for a graceful rclone shutdown. Clicking it twice forces an abort."""
+    """Sends SIGINT for a graceful rclone shutdown. Clicking it twice natively forces an abort."""
     if process and process.poll() is None:
         try: 
-            # Changed SIGTERM to SIGINT to mimic Ctrl+C
             os.killpg(os.getpgid(process.pid), signal.SIGINT)
         except Exception: 
             pass

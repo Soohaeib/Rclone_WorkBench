@@ -4,7 +4,7 @@ gi.require_version('Gtk', '3.0'); gi.require_version('AppIndicator3', '0.1'); gi
 from gi.repository import Gtk, GLib, AppIndicator3, Notify
 from src import workbench_blueprint, config_manager, workbench_ui, rclone_runner, log_formatter, rules_engine, smart_engine
 
-Notify.init("RClone Tray")
+Notify.init("RClone Workbench")
 def notify(title, msg, err=False): Notify.Notification.new(title, msg, "dialog-error" if err else "emblem-synchronizing").show()
 
 class SyncThread(threading.Thread):
@@ -12,6 +12,7 @@ class SyncThread(threading.Thread):
         super().__init__(daemon=True)
         self.profile, self.path, self.app = profile, path, app
         self.req, self.run_state, self.err, self.last, self.proc = False, False, False, "Never", None
+        self.kill_clicks = 0
 
     def trigger_sync(self): self.req = True
 
@@ -22,6 +23,8 @@ class SyncThread(threading.Thread):
                 continue
                 
             self.req, self.run_state, self.err = False, True, False
+            self.kill_clicks = 0
+            
             GLib.idle_add(self.app.update_menu)
             if self.app.workbench: 
                 self.app.workbench.set_status(self.profile, True)
@@ -98,14 +101,25 @@ class RCloneWorkbenchApp:
     def update_menu(self):
         m = Gtk.Menu()
         for p, t in self.threads.items():
-            item = Gtk.MenuItem(label=f"{'🔴' if t.err else '🔵' if t.run_state else '⚪' if t.last == 'Never' else '🟢'} {p.upper():<12}")
+            state_icon = '🔴' if t.err else '🔵' if t.run_state else '⚪' if t.last == 'Never' else '🟢'
+            item = Gtk.MenuItem(label=f"{state_icon} {p.upper():<12}")
             sub = Gtk.Menu()
+            
+            kill_lbl = "Destroy Process" if t.kill_clicks > 0 else "Abandon Process"
+            
+            def handle_kill(_, t_obj=t):
+                rclone_runner.kill_process(t_obj.proc, force=(t_obj.kill_clicks > 0))
+                t_obj.kill_clicks += 1
+                self.update_menu()
+            
             for lbl, cb, sens in [("Sync Now", lambda _, x=p: self.threads[x].trigger_sync(), not t.run_state),
-                                  ("Kill Process", lambda _, x=p: rclone_runner.kill_process(self.threads[x].proc), t.run_state),
+                                  (kill_lbl, handle_kill, t.run_state),
                                   ("Live Output", lambda _, x=p: self.show_live_output(x), True)]:
                 mi = Gtk.MenuItem(label=lbl); mi.connect('activate', cb); mi.set_sensitive(sens); sub.append(mi)
             sub.append(Gtk.SeparatorMenuItem())
-            i = Gtk.MenuItem(label=f"Status: {'⚠️ ERR' if t.err else 'Syncing' if t.run_state else 'Ready':<10} | Last: {t.last}")
+            
+            status_text = '[⊘] ERROR' if t.err else '[🗘] Syncing' if t.run_state else '[➤] Ready'
+            i = Gtk.MenuItem(label=f"Status: {status_text:<10} | Last: {t.last}")
             i.set_sensitive(False); sub.append(i); item.set_submenu(sub); m.append(item)
             
         m.append(Gtk.SeparatorMenuItem())
@@ -122,7 +136,7 @@ class RCloneWorkbenchApp:
         if hasattr(wb := self.open_workbench(), 'focus_profile'): wb.focus_profile(profile)
 
     def on_quit(self, _):
-        [rclone_runner.kill_process(t.proc) for t in self.threads.values() if t.proc]
+        [rclone_runner.kill_process(t.proc, force=True) for t in self.threads.values() if t.proc]
         if self.workbench: [log_formatter.stop_live_feed(p) for p in self.threads]
         Gtk.main_quit()
 

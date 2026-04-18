@@ -44,7 +44,7 @@ SMART_SCHEMA = {
             color="#e74c3c",
             python_hook="audit_resync_environment",
             desc="Automated baseline rebuild. Performs a local environment audit before allowing execution.",
-            expects=["--resync-mode"], 
+            expects=["--resync-mode", "--resync"], 
             rejects=["--track-renames"], 
             satisfy={"--resync": True}   
         ),
@@ -87,7 +87,7 @@ SMART_SCHEMA = {
 CONFIG_SCHEMA = {
     "Hidden System Flags": [
         ToolItem(label="Force Resync", type="check", flag="--resync", hidden=True, rejects=["--track-renames"], desc="Establishes a matching superset of files on both paths to create a new baseline."),
-        ToolItem(label="Resync Mode", type="combo", flag="--resync-mode", options=['newer', 'older', 'larger', 'smaller', 'path1', 'path2'], default="newer", hidden=True, desc="Winner resolution during a resync."),
+        ToolItem(label="Resync Mode", type="combo", flag="--resync-mode", options=['newer', 'older', 'larger', 'smaller', 'path1', 'path2'], default="newer", hidden=True, expects=["--resync"], desc="Winner resolution during a resync."),
         ToolItem(label="Check Access", type="check", flag="--check-access", hidden=True, desc="Aborts if the test file isn't found."),
         ToolItem(label="Check Filename", type="entry", flag="--check-filename", hidden=True, desc="Name of the access test file.")
     ],
@@ -118,8 +118,8 @@ CONFIG_SCHEMA = {
     "Advanced Flags": [
         ToolItem(label="Track Renames", type="check", flag="--track-renames", color="#9b59b6", rejects=["--resync"], desc="Detects renamed files instead of treating them as delete+create."),
         ToolItem(label="Ignore Listing Checksum", type="check", flag="--ignore-listing-checksum", color="#9b59b6", rejects=["--no-slow-hash", "--slow-hash-sync-only", "--download-hash"], desc="Disables retrieving/storing checksums in listing files."),
-        ToolItem(label="No Slow Hash", type="check", flag="--no-slow-hash", color="#9b59b6", expects=["--compare"], satisfy={"--compare": {"checksum": True, "lock": ["checksum"]}}, rejects=["--ignore-listing-checksum", "--slow-hash-sync-only", "--download-hash"], desc="Automatically skips checksums on remotes where they must be computed on-the-fly."),
-        ToolItem(label="Sync Only for Slow Hash", type="check", flag="--slow-hash-sync-only", color="#9b59b6", expects=["--compare"], satisfy={"--compare": {"checksum": True, "lock": ["checksum"]}}, rejects=["--ignore-listing-checksum", "--no-slow-hash", "--download-hash"], desc="Skips slow hashes when scanning for changes, but still performs hash verification during transfer."),
+        ToolItem(label="No Slow Hash", type="check", flag="--no-slow-hash", color="#9b59b6", expects=["--compare"], satisfy={"--compare": {"checksum": True}}, rejects=["--ignore-listing-checksum", "--slow-hash-sync-only", "--download-hash"], desc="Automatically skips checksums on remotes where they must be computed on-the-fly."),
+        ToolItem(label="Sync Only for Slow Hash", type="check", flag="--slow-hash-sync-only", color="#9b59b6", expects=["--compare"], satisfy={"--compare": {"checksum": True}}, rejects=["--ignore-listing-checksum", "--no-slow-hash", "--download-hash"], desc="Skips slow hashes when scanning for changes, but still performs hash verification during transfer."),
         ToolItem(label="Download Hash", type="check", flag="--download-hash", color="#9b59b6", rejects=["--ignore-listing-checksum", "--no-slow-hash", "--slow-hash-sync-only"], desc="Forces hash generation by downloading the full file if no other hash is available.")
     ]
 }
