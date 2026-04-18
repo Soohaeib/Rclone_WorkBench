@@ -26,19 +26,16 @@ class SyncThread(threading.Thread):
             if self.app.workbench: 
                 self.app.workbench.set_status(self.profile, True)
             
-            # 1. Load configuration and lookup
             cfg = config_manager.load_config()
             lookup = rules_engine.get_item_lookup()
             live_state = cfg.get('remote_configs', {}).get(self.profile, {}).copy()
             local_path = cfg.get('local_paths', {}).get(self.profile, '')
             remote_path = live_state.get('remote_path', '')
             
-            # 2. POWERING B: Run the Audit
             live_state = smart_engine.audit_resync_environment(
                 self.profile, local_path, remote_path, live_state
             )
             
-            # 3. TEST C RESOLUTION: Check for Blockers
             audit_errors = [v for k, v in live_state.items() if k.startswith('_AUDIT_ERROR')]
             
             if audit_errors:
@@ -50,23 +47,18 @@ class SyncThread(threading.Thread):
                 GLib.idle_add(self.app.update_menu)
                 if self.app.workbench: 
                     self.app.workbench.set_status(self.profile, False)
-                continue # Abort the sync before rclone even starts
+                continue 
 
-            # 4. Preparation side-effects (Dynamic Trash Bin timestamps)
-            # FIX: Only run the trash setup if the user actually equipped the Local Trash card
-            if 'backup_path_1' in live_state and hasattr(smart_engine, 'setup_trash_bins'):
+            if '--backup-dir1' in live_state and hasattr(smart_engine, 'setup_trash_bins'):
                 live_state = smart_engine.setup_trash_bins(self.profile, local_path, remote_path, live_state)
                 
-            # 5. Execution
             flags = config_manager.build_base_args(self.profile, cfg, live_state)
             
-            # FIX: Explicitly inject the 'bisync' command and the two paths before the flags
             remote_full = f"{self.profile}:{remote_path}" if remote_path else f"{self.profile}:"
             args = ["bisync", local_path, remote_full] + flags
             
             res = rclone_runner.run_sync_session(self.profile, args)
 
-            # 6. Post-Sync Wrap-up & UI Reset
             self.run_state = False
             self.err = not res.get("success", False)
             self.last = datetime.datetime.now().strftime("%H:%M:%S")
@@ -74,13 +66,10 @@ class SyncThread(threading.Thread):
             
             if self.app.workbench:
                 self.app.workbench.set_status(self.profile, False)
-                # Cleanup one-time flags (like --resync) after success
                 if not self.err:
                     self.app.workbench.post_sync_cleanup(self.profile)
-                    
-                    # Save Filter Hash post-sync for Prerequisite 2
                     import hashlib
-                    f_txt = "\n".join([v for k, v in live_state.items() if k.startswith('filter') and isinstance(v, str)])
+                    f_txt = "\n".join([v for k, v in live_state.items() if k.startswith('--filter') and isinstance(v, str)])
                     if f_txt:
                         tracker = os.path.join(workbench_blueprint.APP_DIR, f"{self.profile}_filter_state.md5")
                         try:

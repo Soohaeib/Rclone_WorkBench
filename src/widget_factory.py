@@ -2,17 +2,28 @@ import gi, uuid
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk
 
-def create_inventory_chip(item, key, equip_callback):
+def create_inventory_chip(item, item_id, equip_callback):
     lbl = Gtk.Label(); lbl.set_markup(f"<span foreground='{item.color}'><b>{item.label}</b></span>")
     btn = Gtk.Button(); btn.add(lbl); btn.get_style_context().add_class("chip")
-    
-    # NEW: Tooltips from Blueprint
     if item.desc: btn.set_tooltip_markup(item.desc)
-        
-    btn.connect("clicked", lambda _: equip_callback(key))
+    btn.connect("clicked", lambda _: equip_callback(item_id))
     return btn
 
-def create_canvas_row(item, base_key, row_key, val, is_locked, cb_change, cb_unequip, cb_split):
+def apply_locks(row, item_type, lock_state):
+    if lock_state is True:
+        if hasattr(row, 'input_widget') and row.input_widget: row.input_widget.set_sensitive(False)
+        if hasattr(row, 'drop_btn'): row.drop_btn.set_visible(False)
+    else:
+        if hasattr(row, 'input_widget') and row.input_widget: row.input_widget.set_sensitive(True)
+        if hasattr(row, 'drop_btn'): row.drop_btn.set_visible(True)
+        
+        if isinstance(lock_state, list) and lock_state:
+            if hasattr(row, 'drop_btn'): row.drop_btn.set_visible(False)
+            if item_type == 'multi' and hasattr(row, 'checkboxes'):
+                for opt, chk in row.checkboxes.items():
+                    chk.set_sensitive(opt not in lock_state)
+
+def create_canvas_row(item, base_key, row_key, val, lock_state, cb_change, cb_unequip, cb_split):
     row = Gtk.ListBoxRow(); row.key = row_key; row.set_activatable(False); row.set_selectable(False)
     card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5); card.get_style_context().add_class("canvas-card")
     
@@ -20,14 +31,13 @@ def create_canvas_row(item, base_key, row_key, val, is_locked, cb_change, cb_une
     if item.desc: lbl.set_tooltip_markup(item.desc)
         
     top = Gtk.Box(spacing=10); top.pack_start(lbl, True, True, 0)
-    
     t = getattr(item, 'type', None)
     drop = Gtk.Button(label="✕"); drop.connect("clicked", lambda _: cb_unequip(row)); top.pack_end(drop, False, False, 0); row.drop_btn = drop
     card.pack_start(top, False, False, 0); row.input_widget = None
     
     limit = getattr(item, 'clone_limit', 0)
     if limit != 0 and '.' not in row_key and t in ['text', 'entry']:
-        split_btn = Gtk.Button(label="➕")
+        split_btn = Gtk.Button(label="+")
         split_btn.set_tooltip_text("Split into an additional unblocked entry")
         split_btn.connect("clicked", lambda _: cb_split(f"{base_key}.{uuid.uuid4().hex[:6]}", limit, base_key))
         top.pack_end(split_btn, False, False, 0); row.split_btn = split_btn
@@ -54,18 +64,13 @@ def create_canvas_row(item, base_key, row_key, val, is_locked, cb_change, cb_une
     elif t in ['number', 'count']: 
         min_val = getattr(item, 'validation', {}).get('min', 0)
         max_val = getattr(item, 'validation', {}).get('max', 1000000)
-        # FIX: Avoid "0 is falsy" bug. Explicitly check for None or empty string.
         start_val = val if val not in [None, ""] else min_val 
         adj = Gtk.Adjustment(value=int(start_val), lower=min_val, upper=max_val, step_increment=1)
         w = Gtk.SpinButton(adjustment=adj, numeric=True); w.connect("value-changed", lambda _: cb_change())
         row.input_widget = w; card.pack_start(w, False, False, 0)
         
     row.add(card)
-    
-    if is_locked:
-        if row.input_widget: row.input_widget.set_sensitive(False)
-        row.drop_btn.set_visible(False)
-        
+    apply_locks(row, t, lock_state)
     return row
 
 def extract_value(row, item_type):

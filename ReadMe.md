@@ -2,146 +2,131 @@
 
 This application provides a gamified, inventory-based framework for managing complex `rclone bisync` operations. It wraps rclone's powerful but intricate command-line interface into a safe, visual, and strictly validated GTK3 desktop experience, driven entirely by Type-Safe Python Dataclasses.
 
-## 🏗️ System Architecture
+## System Architecture
 
 The Workbench operates as a multi-layered ecosystem where data, logic, and execution are strictly decoupled.
 
 * **`workbench_blueprint.py`**: *The Data Authority*. Defines the `CONFIG_SCHEMA` (Tools) and `SMART_SCHEMA` (Procedures) using strict Python Dataclasses. This is the absolute source of truth for all configuration schemas.
 
-* **`rules_engine.py`**: *The Logic Processor*. A recursive engine that evaluates card relationships (`expects`, `rejects`, `satisfy`) to ensure a valid command-line state. It gracefully handles `.HEXCODE` cloned widgets.
+* **`rules_engine.py`**: *The Logic Processor*. A recursive engine that evaluates card relationships (`expects`, `rejects`, `satisfy`) to ensure a valid command-line state and enforces strict mathematical boundaries.
 
-* **`smart_engine.py`**: *The Orchestrator & Scanner*. A unified module that analyzes the local `~/.cache/rclone/bisync` directory for session listings to recommend Presets, and executes side-effect methods (e.g., injecting local absolute paths) at execution and preview time.
+* **`smart_engine.py`**: *The Orchestrator & Scanner*. Analyzes the local cache for session listings to recommend Presets. Houses all custom **Python Hooks** for background environmental audits (e.g., 9-Point Safety Audit) and dynamic side-effects.
 
-* **`config_manager.py`**: *The Persistence Layer*. Handles the loading and saving of `bisync_settings.json`, ensures profile integrity, and compiles the final CLI arguments.
+* **`config_manager.py`**: *The Persistence Layer*. Handles saving/loading, dynamically prioritizes short/long flags, natively maps units, and compiles the final CLI arguments.
 
-* **`rclone_runner.py`**: *The Backend Executor*. Manages the subprocess calls to rclone bisync, appends session dividers to logs, and pipes raw JSONL output.
+* **`rclone_runner.py`**: *The Backend Executor*. Manages subprocess calls, ensures graceful `SIGINT` shutdowns, and pipes raw JSONL output.
 
 * **`log_formatter.py`**: *The Parser*. Translates raw rclone JSONL logs into human-readable actions for the UI live feed.
 
-* **`widget_factory.py`**: *The View/Factory*. Responsible solely for instantiating and configuring GTK widgets (Canvas cards and Inventory chips) based on Dataclass properties.
+* **`widget_factory.py`**: *The View/Factory*. Instantiates GTK widgets based on Dataclass properties and strictly enforces `clone_limit` duplication rules.
 
-* **`workbench_ui.py`**: *The Canvas Linker*. The GTK3 interface controller where users interact with the Inventory, Smart Presets, and the active command Canvas.
+* **`workbench_ui.py`**: *The Canvas Linker*. The GTK3 interface controller where users interact with the Inventory, Smart Presets, and the active Canvas.
 
-* **`app.py`**: *The Main Controller*. Manages the application lifecycle, system tray integration, background execution threads, and cross-module communication.
+* **`app.py`**: *The Main Controller*. Manages the system tray, background threads, checks for Hook blockers, explicitly injects the `bisync` command, and safely triggers execution.
 
-> **Note on Environment**: The Workbench explicitly targets the Linux environment, resolving `RCLONE_CONF_PATH` at `~/.config/rclone/rclone.conf` and managing session state within `~/.cache/rclone/bisync`.
+***
 
-## ⚙️ The Blueprint Schema
+## The Blueprint Schema: Complete Manipulation Guide
 
-### 1. Anatomy of a Smart Preset
+To scale the application or add new flags, you only need to modify `workbench_blueprint.py` and write optional hooks in `smart_engine.py`. **Do not alter the UI or execution logic.**
 
-Procedures in `SMART_SCHEMA` are **Master Keys** that orchestrate the application's behavior. They are defined as `SmartPreset` dataclasses.
+### 1. Anatomy of a Smart Preset (`SMART_SCHEMA`)
 
-```
+Procedures are **Master Keys** that orchestrate application behavior, lock down safety parameters, and trigger Python validation scripts.
+
+```python
 @dataclass
 class SmartPreset:
     label: str               # UI Name
-    key: str                 # Unique ID for dependency resolution
-    trigger_condition: str   # Logic trigger (e.g., "missing_listing_file")
+    id: str                  # Unique ID for dependency resolution
+    trigger_condition: str   # Logic trigger (e.g., "manual", "always_on")
+    lifecycle: str           # "persistent" (stays on) or "one_time" (drops on exit 0)
     auto_apply: bool         # Apply payload without user confirmation
-    lifecycle: str           # "one_time" or "persistent"
-    python_hook: str         # Method name in smart_engine.py for live injection
+    python_hook: str         # The EXACT method name to call in smart_engine.py
     color: str               # UI Hex color
-    desc: str                # Technical strategy explanation
-    expects: List[str]       # Required ToolItem keys
-    satisfy: Dict[str, Any]  # Value enforcement map
-    rejects: List[str]       # Conflicting ToolItem keys
-
+    desc: str                # Tooltip explanation
+    expects: List[str]       # ToolItem flags pulled onto the canvas
+    satisfy: Dict[str, Any]  # Value enforcement map (Locks UI inputs)
+    rejects: List[str]       # Conflicting ToolItem flags to automatically drop
 ```
 
-**Key Behaviors:**
+#### Implementing Python Hooks for Presets
 
-* **`lifecycle="one_time"`**: Preset is "dropped" by the logic engine after a successful `exit 0` from rclone (prevents endless resync loops).
+When you define `python_hook="audit_resync_environment"` in the Blueprint, you must create a matching function in `smart_engine.py`. Hooks intercept the state right before UI validation and execution. They must accept 4 arguments and return the modified state dict:
 
-* **`satisfy`**: Maps `{key: value}` used to **Lock** flags to safe values (e.g., forcing a specific `--filter` layout).
-
-### 2. Anatomy of an Inventory Item
-
-Each flag or option in `CONFIG_SCHEMA` is a `ToolItem` dataclass.
-
+```python
+# Inside smart_engine.py
+def audit_resync_environment(profile, local_path, remote_path, live_state):
+    # Perform logic...
+    
+    # Inject errors to trigger the Rules Engine UI block
+    if critical_failure:
+        live_state['_AUDIT_ERROR_CUSTOM'] = "Descriptive error message to show the user."
+        
+    # Or modify values dynamically (e.g., dynamic timestamps)
+    live_state['conflict_suffix'] = f".{timestamp}.old"
+    
+    return live_state
 ```
+
+### 2. Anatomy of an Inventory Item (`CONFIG_SCHEMA`)
+
+Each flag is defined as a `ToolItem`.
+
+```python
 @dataclass
 class ToolItem:
     label: str
-    key: str
-    type: str                # UI Widget type ('check', 'entry', 'multi', etc.)
-    flag: str                # Rclone flag (e.g., "--resync")
-    short: str = ""          # Optional shorthand (e.g., "-v")
-    default: Any = ""
-    default_equipped: bool = False
-    color: str = "#FFFFFF"
-    desc: str = ""
-    options: List[str] = field(default_factory=list)
-    rejects: List[str] = field(default_factory=list)
-    expects: List[str] = field(default_factory=list)
-    satisfy: Dict[str, Any] = field(default_factory=dict)
-    validation: Dict[str, str] = field(default_factory=dict)
-
+    type: str                # Data/Widget type mapping
+    flag: str                # Standard long flag (e.g., "--max-lock")
+    short: str = ""          # Optional shorthand priority (e.g., "-v")
+    default: Any = ""        # Starting value
+    hidden: bool = False     # If True, removed from Inventory search (Smart Preset only)
+    unit: str = ""           # Automatically appended to CLI string (e.g., "m" -> "2m")
+    clone_limit: int = 0     # 0 = No duplication, -1 = Infinite splits, >0 = Max allowed splits
+    options: List[str]       # Choices for 'combo' and 'multi' types
+    validation: Dict[str, Union[int, float]] # Strict math boundaries e.g. {"min": 0, "max": 100}
+    expects, rejects, satisfy: # Dependency arrays (same as Smart Presets)
 ```
 
-**Supported Widget Types:**
+#### Valid Types & Formatting
 
-1. **`check`**: A toggle-style card. Emits the flag with no value (e.g., `--resync`).
-2. **`entry`**: A single text input. Emits `--flag "value"`.
-3. **`combo`**: A dropdown selector for a predefined value from the `options` array.
-4. **`multi`**: Generates a FlowBox of independent checkboxes. Emits a comma-separated string (e.g., `--compare "size,modtime"`).
-5. **`count`**: A repeatable counter (e.g., `-v`, `-vv`). UI renders a SpinButton; generator emits repeated shorthand flags (e.g., `-vvv`).
-6. **`text`**: A multiline text field.
+| Type         | UI Widget      | CLI Output Generation                | Use Case                                 |
+| :----------- | :------------- | :----------------------------------- | :--------------------------------------- |
+| **`check`**  | Toggle Switch  | `--flag` (No value attached)         | Simple booleans (e.g., `--dry-run`)      |
+| **`entry`**  | Text Input     | `--flag "user_string"`               | Single strings, paths, suffixes          |
+| **`text`**   | Multi-line Box | `--flag "line1" --flag "line2"`      | Complex inputs (e.g., `--filter`)        |
+| **`combo`**  | Dropdown       | `--flag "selected_option"`           | Single-choice conflict resolution        |
+| **`multi`**  | Checkboxes     | `--flag "opt1,opt2"`                 | Comma-separated list (e.g., `--compare`) |
+| **`number`** | Spin Button    | `--flag "50unit"`                    | Values needing math validation and units |
+| **`count`**  | Spin Button    | `-v -v -v` (Repeats short/long flag) | Verbose scaling, debug levels            |
+***
 
-   * **The Split Mechanic (➕)**: Base `text` items feature a split button in the UI. Clicking it spawns an independent clone (e.g., `filter.a1b2c3`) to allow unlimited repeating flags, crucial for multiple `--filter` lines.
+## Logic Engine & Split Mechanics
 
-## 🧠 Logic Engine & Rules
+The Workbench evaluates dependencies (`expects`, `rejects`, `satisfy`) recursively. If a Smart Preset `satisfies` a ToolItem with a specific value, that ToolItem is forced onto the canvas, locked to that value, and the user is physically prevented from modifying or deleting it.
 
-The Workbench uses a triple-constraint system evaluated recursively by `rules_engine.py`:
+### The Duplication/Split Mechanic (`clone_limit`)
 
-1. **`expects`**: Prerequisites. If a Tool is equipped, these keys are pulled onto the Canvas automatically.
-2. **`rejects`**: Mutual exclusion. Equipping a card with a "Conflict" drops the offending card from the Canvas.
-3. **`satisfy`**: Value enforcer. Forces specific values on other cards and **locks** the input widget in the UI to prevent user error.
+If a `text` or `entry` item has a `clone_limit` set (e.g., `clone_limit=-1`), a `+` button appears on the card.
+* Clicking `+` generates an unblocked, uniquely hashed clone (e.g., `filter.a1b2c3`).
+* This brilliantly allows a Smart Preset to permanently lock a safety rule on the base `filter` card, while allowing the user to spawn clones to add their own custom inclusion/exclusion rules alongside it.
 
-### The Duality of Locked Arrays
+***
 
-When a Smart Preset uses `satisfy` to lock a text item (e.g., locking `--filter` to natively exclude trash bins with Rclone's dynamic `{2006-01-02_150405}` variables), the base widget's text field and `✕` close button are disabled.
+## Usage & Operating Context
 
-However, the `➕` split button remains active. This brilliantly allows the system to:
+### System Tray & Application Lifecycle
 
-* **Guarantee** that safety filters remain untouched.
-
-* **Permit** the user to spawn unblocked `.HEXCODE` clones to add custom filter rules alongside the locked ones.
-
-## 🖥️ Usage Guidelines & Working Structure
-
-### The System Tray
-
-When launched via `app.py`, the Workbench minimizes to a system tray icon (`network-server`).
-
-* The tray parses `~/.config/rclone/rclone.conf` and creates an independent background thread for each remote profile.
-
-* **Status Indicators**: Each profile displays a colored dot reflecting its state (🟢 Ready, 🔵 Syncing, 🔴 Error, ⚪ Never Synced).
-
-* You can manually trigger a sync, kill a hanging process, or open the Live Output/Inventory directly from the tray menu.
+* Run `python3 app.py` to initialize. The app parses `~/.config/rclone/rclone.conf` and creates an isolated background thread for each remote profile.
+* You can manually trigger syncs, gracefully terminate processes (SIGINT), or monitor real-time parsed log outputs directly from the tray.
 
 ### The Workbench UI
 
-The main configuration window is divided into three distinct panels:
+1. **Smart Presets (Left)**: Heuristic toggles. If the local audit detects a missing `.lst` file or an active `.lck` PID, the engine natively recommends or mandates these procedures.
+2. **Inventory (Middle)**: A categorized sandbox of all Rclone flags.
+3. **Canvas (Right)**: The live staging area. Any modifications update the **Live Preview** command. If an audit fails (e.g., empty source directory) or validation breaks, the UI turns red and safely disables execution.
 
-1. **Smart Presets (Left)**: Heuristic-driven toggles. The `smart_engine` scans your environment on load. If it detects a missing listing file, it will recommend the "Master Safe Resync" preset to recover safely.
-2. **Inventory Tools (Middle)**: A categorized sandbox of all available Rclone flags defined in the Blueprint. Click a chip to equip it to the Canvas.
-3. **Active Canvas (Right)**: The live staging area. Cards here represent the exact state that will be fed to Rclone.
+### Sandbox Testing
 
-   * Editing values, splitting arrays, or toggling presets immediately updates the **Live Command Preview** at the bottom of the screen.
-
-   * If a rule validation fails (e.g., `--max-lock` is less than `2m`), the preview console turns red and the "Apply" button is disabled.
-
-### Live Outputs
-
-During execution, rclone is run with `--use-json-log`. The `rclone_runner.py` pipes this output to a `.jsonl` file in the logs directory.
-
-* The **Live Outputs** tab reads this file in real-time using a daemon tailer.
-
-* The `log_formatter.py` strips out terminal colors and translates raw JSON logs into a clean, human-readable terminal feed, extracting transfer speeds, ETA, and specific file actions directly to the UI.
-
-* Session dividers automatically separate runs in the log file, keeping history legible.
-
-### Adding New Flags
-
-To add new Rclone features, **do not touch the python logic code**. Simply open `workbench_blueprint.py` and add a new `ToolItem` to the `CONFIG_SCHEMA`. The Factory, Rules Engine, and Config Manager will automatically render, validate, and execute it.
+You can safely test configurations without risking cloud data by setting up a local Rclone alias. Point your `rclone.conf` to a fake local cloud folder (`type = alias`), target it in the Workbench UI, and use the `--dry-run` flag to watch the Logic Engine manage Trash overlap protections and dependency cascades.

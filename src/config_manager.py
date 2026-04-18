@@ -13,7 +13,7 @@ def save_config(cfg):
 def ensure_profile_exists(profile):
     cfg = load_config()
     if profile not in cfg.setdefault('remote_configs', {}):
-        cfg['remote_configs'][profile] = {i.key: getattr(i, 'default', "") if i.type != 'check' else False for sec in CONFIG_SCHEMA.values() for i in sec}
+        cfg['remote_configs'][profile] = {getattr(i, 'flag', ''): getattr(i, 'default', "") if i.type != 'check' else False for sec in CONFIG_SCHEMA.values() for i in sec}
         save_config(cfg)
     return cfg
 
@@ -26,10 +26,9 @@ def build_base_args(profile, global_cfg, inferred_locks):
             flag = getattr(item, 'flag', None)
             if not flag: continue
             
-            # Universal Short Flag Priority
             cmd_flag = getattr(item, 'short', None) or flag
             
-            for k in [x for x in state if (x.split('.')[0] if '.' in x else x) == item.key]:
+            for k in [x for x in state if (x.split('.')[0] if '.' in x else x) == flag]:
                 val = state.get(k)
                 if not val and val != 0: continue
                 
@@ -46,11 +45,9 @@ def build_base_args(profile, global_cfg, inferred_locks):
                 elif t == 'entry' and str(val).strip():
                     args += [cmd_flag, str(val).strip()]
                 elif t == 'number' and int(val) > 0: 
-                    # Natively appends the unit, e.g. "2" + "m" -> "2m"
                     unit = getattr(item, 'unit', '')
                     args += [cmd_flag, f"{val}{unit}"]
                 elif t == 'count' and int(val) > 0:
-                    # Repeats the flag X times (e.g., -v -v -v)
                     args.extend([cmd_flag] * int(val))
                     
     return args

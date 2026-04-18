@@ -33,7 +33,6 @@ class LiveOutputPanel:
             self.tabs[p] = {'vbox': vbox, 'status': status, 'buffer': tv.get_buffer(), 'tv': tv, 'sw': sw}
             log_formatter.start_live_feed(p, lambda a, x=p: GLib.idle_add(self.update_logs, x, a))
             
-        # FIX: We now use the `page` argument directly provided by GTK to get the exact target tab
         self.notebook.connect("switch-page", lambda n, page, page_num: self.change_callback(n.get_tab_label(page).get_text()) if self.change_callback else None)
 
     def focus_profile(self, profile):
@@ -64,7 +63,6 @@ class InventoryWorkbench:
         self.remotes, self.global_cfg = profiles, config_manager.load_config()
         self.items_lookup, self.smart_keys = rules_engine.get_item_lookup(), rules_engine.get_smart_keys()
         
-        # FIX: Added self._is_syncing_profile traffic cop flag
         self.is_dirty, self._updating_rules, self._is_syncing_profile, self.smart_toggles = False, False, False, {}
         
         self.builder = Gtk.Builder(); self.builder.add_from_file(os.path.join(os.path.dirname(__file__), "workbench.glade"))
@@ -119,14 +117,13 @@ class InventoryWorkbench:
         for i in SMART_SCHEMA.get("Smart Automations", []):
             h = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12); h.set_tooltip_text(i.desc); h.set_margin_start(8); h.set_margin_end(8)
             lbl = Gtk.Label(xalign=0); lbl.set_markup(f"<span foreground='{i.color}'><b>{i.label}</b></span>"); h.pack_start(lbl, True, True, 0)
-            sw = Gtk.Switch(); sw.set_valign(Gtk.Align.CENTER); sw.set_name(n := f"smart_switch_{i.key}")
+            sw = Gtk.Switch(); sw.set_valign(Gtk.Align.CENTER); sw.set_name(n := f"smart_switch_{i.id}")
             css += f"#{n}:checked {{ background-image: none; background-color: {i.color}; }}\n"
-            sw.connect('notify::active', self.on_smart_preset_toggled, i.key)
-            self.smart_toggles[i.key] = sw; h.pack_end(sw, False, False, 0); self.smart_container.pack_start(h, False, False, 0)
+            sw.connect('notify::active', self.on_smart_preset_toggled, i.id)
+            self.smart_toggles[i.id] = sw; h.pack_end(sw, False, False, 0); self.smart_container.pack_start(h, False, False, 0)
         p = Gtk.CssProvider(); p.load_from_data(css.encode()); Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), p, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
     def on_profile_changed(self, combo):
-        # FIX: Prevents infinite loop between combo box and notebook tab switching
         if self._is_syncing_profile: return
         if profile := combo.get_active_text(): 
             self._is_syncing_profile = True
@@ -135,7 +132,6 @@ class InventoryWorkbench:
             self._is_syncing_profile = False
 
     def sync_ui_to_log_tab(self, profile_name):
-        # FIX: Safely handles reverse-updates from the notebook back to the combo box
         if self._is_syncing_profile: return
         self._is_syncing_profile = True
         for i, row in enumerate(self.profile_combo.get_model()):
@@ -161,17 +157,17 @@ class InventoryWorkbench:
     def _gather_live_keys(self):
         return [r.key for r in self.can_list.get_children()] + [k for k, b in self.smart_toggles.items() if b.get_active() and k not in [r.key for r in self.can_list.get_children()]]
 
-    def equip_logic(self, key):
-        fk, fv, lk = rules_engine.evaluate_state(self._gather_live_keys() + [key] if key not in self._gather_live_keys() else self._gather_live_keys(), self.items_lookup)
+    def equip_logic(self, item_id):
+        fk, fv, lk = rules_engine.evaluate_state(self._gather_live_keys() + [item_id] if item_id not in self._gather_live_keys() else self._gather_live_keys(), self.items_lookup)
         self._apply_new_state(fk, fv, lk); self.check_dirty()
 
     def unequip_logic(self, row):
         fk, fv, lk = rules_engine.evaluate_state([k for k in self._gather_live_keys() if k != row.key], self.items_lookup)
         self._apply_new_state(fk, fv, lk); self.check_dirty()
 
-    def on_smart_preset_toggled(self, switch, pspec, key):
+    def on_smart_preset_toggled(self, switch, pspec, item_id):
         if self._updating_rules: return
-        if key == "preset_safe_trash" and switch.get_active() and (lp := self.path_entry.get_text()) and os.path.exists(lp):
+        if item_id == "preset_safe_trash" and switch.get_active() and (lp := self.path_entry.get_text()) and os.path.exists(lp):
             try: os.makedirs(os.path.join(lp, TRASH_LOCAL_NAME), exist_ok=True)
             except: pass
         fk, fv, lk = rules_engine.evaluate_state(self._gather_live_keys(), self.items_lookup)
@@ -185,11 +181,8 @@ class InventoryWorkbench:
         for k in list(current_rows):
             if k not in display_keys: self.can_list.remove(current_rows.pop(k))
             
-        # --- NEW: Clone Enforcer Callback ---
         def enforce_split(new_key, limit, base_k):
-            # Count existing clones on the canvas for this base key
             current_clones = len([r for r in self.can_list.get_children() if r.key.split('.')[0] == base_k])
-            # The base card counts as 1. So if limit is 2, we can only have base + 1 clone.
             if limit == -1 or current_clones < limit:
                 self.equip_logic(new_key)
             else:
@@ -199,14 +192,14 @@ class InventoryWorkbench:
             base_k = k.split('.')[0] if '.' in k else k
             item = self.items_lookup[base_k]
             if k not in current_rows:
-                # Pass enforce_split to the factory
-                new_row = widget_factory.create_canvas_row(item, base_k, k, values_dict.get(k, getattr(item, 'default', "")), k in locked_keys, self.check_dirty, self.unequip_logic, enforce_split)
+                lock_state = locked_keys.get(k, False)
+                new_row = widget_factory.create_canvas_row(item, base_k, k, values_dict.get(k, getattr(item, 'default', "")), lock_state, self.check_dirty, self.unequip_logic, enforce_split)
                 self.can_list.add(new_row); current_rows[k] = new_row
                 
         for k, r in current_rows.items():
             if k in values_dict: widget_factory.inject_value(r, self.items_lookup[k.split('.')[0] if '.' in k else k], values_dict[k])
-            if hasattr(r, 'input_widget') and r.input_widget: r.input_widget.set_sensitive(k not in locked_keys)
-            if hasattr(r, 'drop_btn'): r.drop_btn.set_visible(k not in locked_keys)
+            lock_state = locked_keys.get(k, False)
+            widget_factory.apply_locks(r, getattr(self.items_lookup[k.split('.')[0] if '.' in k else k], 'type', None), lock_state)
             if hasattr(r, 'split_btn'): r.split_btn.set_visible('.' not in k)
 
         for k, btn in self.smart_toggles.items():
@@ -222,11 +215,11 @@ class InventoryWorkbench:
         for cat, items in CONFIG_SCHEMA.items():
             if cat_filter != "All Categories" and cat != cat_filter: continue
             
-            if available := [i for i in items if i.key not in excluded and not getattr(i, 'hidden', False) and str(i.default_equipped) != "0" and (not search or search in f"{i.label} {i.key} {i.desc}".lower())]:
+            if available := [i for i in items if i.flag not in excluded and not getattr(i, 'hidden', False) and str(i.default_equipped) != "0" and (not search or search in f"{i.label} {i.flag} {i.desc}".lower())]:
                 grp = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
                 lbl = Gtk.Label(xalign=0); lbl.set_markup(f"<span color='#888' size='small'><b>{cat.upper()}</b></span>"); grp.pack_start(lbl, False, False, 0)
                 flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE)
-                [flow.add(widget_factory.create_inventory_chip(i, i.key, self.equip_logic)) for i in available]
+                [flow.add(widget_factory.create_inventory_chip(i, i.flag, self.equip_logic)) for i in available]
                 grp.pack_start(flow, False, False, 0); self.inventory_container.pack_start(grp, False, False, 0)
         self.window.show_all()
 
@@ -235,7 +228,6 @@ class InventoryWorkbench:
         live_state = {r.key: widget_factory.extract_value(r, getattr(self.items_lookup[r.key.split('.')[0] if '.' in r.key else r.key], 'type', 'check')) for r in self.can_list.get_children()}
         live_state.update({k: True for k, b in self.smart_toggles.items() if b.get_active()})
         
-        # FIX: Added (type(v) in [int, float]) to allow number/count widgets to survive the filter
         active_keys = [k for k, v in live_state.items() if v is True or (isinstance(v, str) and v) or (type(v) in [int, float])]
         _, fv, _ = rules_engine.evaluate_state(active_keys, self.items_lookup)
         
@@ -266,7 +258,6 @@ class InventoryWorkbench:
         
         prof_cfg = self.global_cfg.get('remote_configs', {}).get(p, {})
         
-        # FIX: Same filter fix applied here for the initial load
         active_keys = {k for k, v in prof_cfg.items() if v is True or (isinstance(v, str) and v) or (type(v) in [int, float])}
         active_keys.update(rec for rec in smart_engine.scan_environment(lp, p) if getattr(self.items_lookup.get(rec, object), "auto_apply", False))
             
@@ -287,7 +278,7 @@ class InventoryWorkbench:
 
     def post_sync_cleanup(self, profile):
         p_cfg = self.global_cfg.get('remote_configs', {}).get(profile, {})
-        if any(p_cfg.pop(i.key, None) for i in SMART_SCHEMA.get("Smart Automations", []) if getattr(i, "lifecycle", "persistent") == "one_time" and p_cfg.get(i.key)):
+        if any(p_cfg.pop(i.id, None) for i in SMART_SCHEMA.get("Smart Automations", []) if getattr(i, "lifecycle", "persistent") == "one_time" and p_cfg.get(i.id)):
             fk, merged, lk = rules_engine.evaluate_state([k for k, v in p_cfg.items() if v is True or (isinstance(v, str) and v)], self.items_lookup)
             self.global_cfg['remote_configs'][profile] = merged; config_manager.save_config(self.global_cfg)
             if self.profile_combo.get_active_text() == profile: self._apply_new_state(fk, merged, lk)
