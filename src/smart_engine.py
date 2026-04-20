@@ -101,3 +101,19 @@ def enforce_checksum_dependency(profile, local_path, remote_path, live_state):
     if 'checksum' not in compare_val:
         live_state['_AUDIT_ERROR_HASH'] = "This Advanced Flag requires 'checksum' to be enabled in the Compare Engine."
     return live_state
+
+def verify_star_topology_sentinels(profile, local_path, remote_path, live_state):
+    """
+    Enforces strict safety checks for multi-device (Hub and Spoke) setups.
+    Ensures that a missing cloud drive doesn't wipe all local nodes.
+    """
+    # Hub-and-Spoke requires a sentinel file to protect the central hub
+    if live_state.get('--check-access'):
+        fname = live_state.get('--check-filename', 'RCLONE_TEST')
+        
+        # We ensure the user didn't accidentally raise the max-delete threshold too high
+        # for a distributed environment.
+        if live_state.get('--max-delete', 100) > 10:
+            live_state['_AUDIT_ERROR_TOPOLOGY'] = "Hub-and-Spoke requires --max-delete to be 10% or lower to prevent cascading mass deletions across devices."
+            
+    return live_state

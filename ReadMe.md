@@ -10,7 +10,7 @@ The Workbench operates as a multi-layered ecosystem where data, logic, and execu
 
 * **`rules_engine.py`**: *The Logic Processor*. A recursive engine that evaluates card relationships (`expects`, `rejects`, `satisfy`) to ensure a valid command-line state and enforces strict mathematical boundaries.
 
-* **`smart_engine.py`**: *The Orchestrator & Scanner*. Analyzes the local cache for session listings to recommend Presets. Houses all custom **Python Hooks** for background environmental audits (e.g., 9-Point Safety Audit) and dynamic side-effects.
+* **`smart_engine.py`**: *The Orchestrator & Scanner*. Analyzes the local cache for session listings to recommend Presets. Houses all custom **Python Hooks** for background environmental audits. It runs a strict 9-Point Safety Audit (checking for stale locks, empty directory traps, and caching filter MD5 hashes to `bisync_settings.json` to prevent mass deletions on filter changes).
 
 * **`config_manager.py`**: *The Persistence Layer*. Handles saving/loading, dynamically prioritizes short/long flags, natively maps units, and compiles the final CLI arguments.
 
@@ -25,6 +25,18 @@ The Workbench operates as a multi-layered ecosystem where data, logic, and execu
 * **`app.py`**: *The Main Controller*. Manages the system tray, background threads, checks for Hook blockers, explicitly injects the `bisync` command, and safely triggers execution.
 
 ***
+
+### The 9-Point Environmental Audit
+Before any sync executes, `smart_engine.py` runs a lightning-fast local audit. If any of these fail, it injects an `_AUDIT_ERROR` key into the state, causing the Rules Engine to physically lock the UI's "Apply" button:
+1. **First-Run Detection**: Mandates a resync if no `.lst` files exist.
+2. **Filter Integrity**: Compares the current filter MD5 hash against the hash saved in `bisync_settings.json`.
+3. **Critical Lockout**: Detects `.lst-err` files from prior crashes.
+4. **Session Drift**: Normalizes anchor names to bypass false positives during `--dry-run`.
+5. **Stale Lock PID Check**: Validates if `.lck` files belong to active or dead OS processes.
+6. **Structural Flag Changes**: Detects changes to core comparison logic.
+7. **Empty Path Trap**: Blocks `--resync` if the local path has 0 files, preventing catastrophic cloud wipes.
+8. **Backend Capability**: Validates if the remote supports modtime comparisons.
+9. **Access Health**: Verifies `RCLONE_TEST` sentinel files exist locally to prevent syncing against unmounted drives.
 
 ## The Blueprint Schema: Complete Manipulation Guide
 
