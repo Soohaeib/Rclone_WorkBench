@@ -11,6 +11,7 @@ def get_remote_type(profile):
 
 def audit_resync_environment(profile, local_path, remote_path, live_state):
     from src.workbench_blueprint import RCLONE_CACHE_DIR, APP_DIR
+    from src import config_manager
     anchor = os.path.basename(local_path.strip('/')) if local_path else profile
     base_glob = os.path.join(RCLONE_CACHE_DIR, f"*{anchor}*")
     
@@ -28,28 +29,42 @@ def audit_resync_environment(profile, local_path, remote_path, live_state):
                 live_state['_AUDIT_ERROR_STALE'] = "Crashed State (.lck) detected. Directed Resync recommended to recover safely."
         except ValueError: pass
 
+    # --- HASH AUDIT LOGIC (VERIFIED) ---
     filter_text = "\n".join([v for k, v in live_state.items() if k.startswith('--filter') and isinstance(v, str)])
-    tracker_path = os.path.join(APP_DIR, f"{profile}_filter_state.md5")
-    
+    cfg = config_manager.load_config()
+    cached_md5 = cfg.get('filter_hashes', {}).get(profile)
+
+    # This logic is correct. A resync is only mandatory if a hash exists and it doesn't match,
+    # or if a hash existed and has now been removed (meaning filters were deleted).
+    # A missing hash on the first run is NOT an error.
     if filter_text:
         current_md5 = hashlib.md5(filter_text.encode()).hexdigest()
-        if os.path.exists(tracker_path):
-            with open(tracker_path, 'r') as f: cached_md5 = f.read().strip()
-            if current_md5 != cached_md5 and not is_resync_equipped:
-                live_state['_AUDIT_ERROR_FILTER'] = "Filter modification detected. Directed Resync is MANDATORY to prevent mass deletions."
-        else: pass
+        if cached_md5 is not None and current_md5 != cached_md5 and not is_resync_equipped:
+            live_state['_AUDIT_ERROR_FILTER'] = "Filter modification detected. Directed Resync is MANDATORY to prevent mass deletions."
+    elif cached_md5 is not None and not is_resync_equipped:
+        live_state['_AUDIT_ERROR_FILTER'] = "Filters were completely removed. Directed Resync is MANDATORY to prevent mass deletions."
 
-    if local_path and os.path.exists(local_path):
+
+    # --- DIRECTED RESYNC SAFETY CHECKS (HARDENED) ---
+
+    # CLEVER CHECK 1: The Empty Directory Catastrophe.
+    # Block a RESYNC if the local path is empty to prevent wiping the remote.
+    if is_resync_equipped and local_path and os.path.exists(local_path):
         try:
-            if len(os.listdir(local_path)) == 0 and not is_resync_equipped:
-                live_state['_AUDIT_ERROR_EMPTY'] = f"Local path '{anchor}' has 0 files! Resync mandatory to bypass Rclone's safety abort."
-        except Exception: pass
+            if not os.listdir(local_path):
+                live_state['_AUDIT_ERROR_EMPTY'] = f"DANGER: Local path '{anchor}' is empty. A Resync under these conditions would DELETE ALL cloud files. Aborting."
+        except Exception as e:
+            live_state['_AUDIT_ERROR_PATH'] = f"Cannot read local path '{anchor}': {e}"
 
+    # CLEVER CHECK 2: The Unreliable Backend Problem.
+    # This check is excellent and remains unchanged.
     if is_resync_equipped and live_state.get('--resync-mode') in ['newer', 'older']:
         rtype = get_remote_type(profile.split(':')[0])
         if rtype in ['photos', 'ftp', 'memory']: 
-            live_state['_AUDIT_ERROR_MODTIME'] = f"Backend '{rtype}' does not support accurate modtimes for '{live_state.get('--resync-mode')}'. Use 'path1' or 'size'."
+            live_state['_AUDIT_ERROR_MODTIME'] = f"Backend '{rtype}' does not support accurate modtimes for '{live_state.get('--resync-mode')}'. Use 'path1' or 'size' to avoid data loss."
 
+    # CLEVER CHECK 3: The Mount Safety Lock.
+    # This check is excellent and remains unchanged. It's a great general safety net.
     if live_state.get('--check-access') and live_state.get('--check-filename'):
         fname = live_state.get('--check-filename')
         if local_path and os.path.exists(local_path):

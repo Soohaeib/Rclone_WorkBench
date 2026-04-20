@@ -22,29 +22,43 @@ def run_sync_session(profile: str, args: list):
         universal_newlines=True, 
         preexec_fn=os.setsid
     )
+
+    # --- NON-BLOCKING LOG CAPTURE ---
+    # This thread handles the blocking readline() calls, so our main function doesn't get stuck.
+    def _log_capture_thread(proc, log_file_path):
+        with open(log_file_path, "a", encoding="utf-8") as lf:
+            while True:
+                line = proc.stdout.readline() if proc.stdout else ""
+                if not line and proc.poll() is not None:
+                    break
+                if line:
+                    lf.write(line)
+                    lf.flush()
     
-    output_buffer = []
+    import threading
+    log_thread = threading.Thread(target=_log_capture_thread, args=(process, log_path), daemon=True)
+    log_thread.start()
     
-    with open(log_path, "a", encoding="utf-8") as f:
-        while True:
-            line = process.stdout.readline() if process.stdout else ""
-            if not line and process.poll() is not None:
-                break
-            if line:
-                output_buffer.append(line)
-                f.write(line)
-                f.flush() 
-                
+    # The main function now waits directly for the process to terminate.
+    # When kill_process() is called, this wait will end immediately.
+    process.wait()
+    # --------------------------------
+
     return {
         "success": process.returncode == 0,
         "process": process,
-        "output": "".join(output_buffer)
+        "output": "" # Output is now directly in the file, not buffered in memory.
     }
 
-def kill_process(process):
-    """Sends SIGINT for a graceful rclone shutdown. Clicking it twice natively forces an abort."""
+def kill_process(process, force=False):
+    """Sends a signal to the process group: SIGINT for graceful, SIGKILL for forceful."""
     if process and process.poll() is None:
+        # Choose the signal based on the 'force' flag
+        target_signal = signal.SIGKILL if force else signal.SIGINT
+        
         try: 
-            os.killpg(os.getpgid(process.pid), signal.SIGINT)
-        except Exception: 
+            os.killpg(os.getpgid(process.pid), target_signal)
+        except Exception as e:
+            # It's good practice to at least print the error if killing fails
+            print(f"Failed to kill process {process.pid} with signal {target_signal}: {e}")
             pass

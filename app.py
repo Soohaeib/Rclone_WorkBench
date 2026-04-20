@@ -12,6 +12,7 @@ class SyncThread(threading.Thread):
         super().__init__(daemon=True)
         self.profile, self.path, self.app = profile, path, app
         self.req, self.run_state, self.err, self.last, self.proc = False, False, False, "Never", None
+        self.last = log_formatter.get_last_run_time(profile)
         self.kill_clicks = 0
 
     def trigger_sync(self): self.req = True
@@ -64,7 +65,7 @@ class SyncThread(threading.Thread):
 
             self.run_state = False
             self.err = not res.get("success", False)
-            self.last = datetime.datetime.now().strftime("%H:%M:%S")
+            self.last = datetime.datetime.now().isoformat()
             self.proc = None
             
             if self.app.workbench:
@@ -73,11 +74,19 @@ class SyncThread(threading.Thread):
                     self.app.workbench.post_sync_cleanup(self.profile)
                     import hashlib
                     f_txt = "\n".join([v for k, v in live_state.items() if k.startswith('--filter') and isinstance(v, str)])
+                    
+                    # NEW: Save the hash directly into the JSON config file
+                    cfg = config_manager.load_config()
+                    if 'filter_hashes' not in cfg:
+                        cfg['filter_hashes'] = {}
+                        
                     if f_txt:
-                        tracker = os.path.join(workbench_blueprint.APP_DIR, f"{self.profile}_filter_state.md5")
-                        try:
-                            with open(tracker, 'w') as f: f.write(hashlib.md5(f_txt.encode()).hexdigest())
-                        except Exception: pass
+                        cfg['filter_hashes'][self.profile] = hashlib.md5(f_txt.encode()).hexdigest()
+                    else:
+                        # Clean up the hash from JSON if filters were successfully removed
+                        cfg['filter_hashes'].pop(self.profile, None)
+                        
+                    config_manager.save_config(cfg)
             
             GLib.idle_add(self.app.update_menu)
             
@@ -100,7 +109,37 @@ class RCloneWorkbenchApp:
 
     def update_menu(self):
         m = Gtk.Menu()
+        
+        # Helper to calculate relative time dynamically
+        def format_relative(iso_str):
+            if not iso_str or iso_str == "Never": return "Never"
+            try:
+                clean_iso = iso_str.split('.')[0].split('+')[0].split('Z')[0]
+                dt = datetime.datetime.strptime(clean_iso, "%Y-%m-%dT%H:%M:%S")
+                secs = (datetime.datetime.now() - dt).total_seconds()
+                
+                if secs < 60: return "Just now"
+                if secs < 3600: return f"{int(secs//60)} mins ago"
+                if secs < 86400: return f"{int(secs//3600)} hours ago"
+                if secs < 172800: return "Yesterday"
+                return f"{int(secs//86400)} days ago"
+            except: 
+                return "Unknown"
+
+        # NEW: Helper to create a menu item with a native GTK symbolic icon
+        def create_icon_item(icon_name, text):
+            item = Gtk.MenuItem()
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            icon = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU)
+            lbl = Gtk.Label(label=text, xalign=0)
+            box.pack_start(icon, False, False, 0)
+            box.pack_start(lbl, True, True, 0)
+            box.show_all() # Ensure the custom layout is visible
+            item.add(box)
+            return item
+
         for p, t in self.threads.items():
+            # Keep the colored circles for the top-level menu (these are universally safe)
             state_icon = '🔴' if t.err else '🔵' if t.run_state else '⚪' if t.last == 'Never' else '🟢'
             item = Gtk.MenuItem(label=f"{state_icon} {p.upper():<12}")
             sub = Gtk.Menu()
@@ -112,18 +151,34 @@ class RCloneWorkbenchApp:
                 t_obj.kill_clicks += 1
                 self.update_menu()
             
-            for lbl, cb, sens in [("Sync Now", lambda _, x=p: self.threads[x].trigger_sync(), not t.run_state),
+            for lbl, cb, sens in[("Sync Now", lambda _, x=p: self.threads[x].trigger_sync(), not t.run_state),
                                   (kill_lbl, handle_kill, t.run_state),
                                   ("Live Output", lambda _, x=p: self.show_live_output(x), True)]:
                 mi = Gtk.MenuItem(label=lbl); mi.connect('activate', cb); mi.set_sensitive(sens); sub.append(mi)
             sub.append(Gtk.SeparatorMenuItem())
             
-            status_text = '[⊘] ERROR' if t.err else '[🗘] Syncing' if t.run_state else '[➤] Ready'
-            i = Gtk.MenuItem(label=f"Status: {status_text:<10} | Last: {t.last}")
-            i.set_sensitive(False); sub.append(i); item.set_submenu(sub); m.append(item)
+            # --- NATIVE GTK SYMBOLIC ICONS ---
+            if t.err:
+                s_icon, s_text = "dialog-error-symbolic", "ERROR"
+            elif t.run_state:
+                s_icon, s_text = "view-refresh-symbolic", "Syncing..."
+            else:
+                s_icon, s_text = "media-playback-start-symbolic", "Ready"
+                
+            i_status = create_icon_item(s_icon, f"Status: {s_text}")
+            i_status.set_sensitive(False)
+            sub.append(i_status)
+            
+            # Added a clock icon for the Last Run row!
+            i_last = create_icon_item("document-open-recent-symbolic", f"Last Run: {format_relative(t.last)}")
+            i_last.set_sensitive(False)
+            sub.append(i_last)
+            # ---------------------------------
+            
+            item.set_submenu(sub); m.append(item)
             
         m.append(Gtk.SeparatorMenuItem())
-        for lbl, cb in [("Inventory Workbench", lambda _: self.open_workbench()), ("Quit Application", self.on_quit)]:
+        for lbl, cb in[("Inventory Workbench", lambda _: self.open_workbench()), ("Quit Application", self.on_quit)]:
             mi = Gtk.MenuItem(label=lbl); mi.get_style_context().add_class("menu-action"); mi.connect('activate', cb); m.append(mi)
         m.show_all(); self.ind.set_menu(m)
 

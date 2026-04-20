@@ -14,7 +14,7 @@ def create_inventory_chip(item, item_id, equip_callback, disabled_keys=None):
     
     if is_disabled:
         locker_name = disabled_keys.get(item_id, "current configuration")
-        btn.set_tooltip_markup(f"<span color='orange'>Locked by {locker_name}</span>")
+        btn.set_tooltip_markup(f"<span color='orange'>[🔒︎] Locked by {locker_name}</span>")
         btn.set_sensitive(False)
     elif item.desc: 
         btn.set_tooltip_markup(item.desc)
@@ -33,17 +33,21 @@ def apply_locks(row, item_type, lock_state):
     if isinstance(lock_state, str): # Full Macro Lock (lock_state is the Locker's Label)
         if hasattr(row, 'input_widget') and row.input_widget: 
             row.input_widget.set_sensitive(False)
-            row.input_widget.set_tooltip_text(f"Locked by {lock_state}")
+            row.input_widget.set_tooltip_text(f"[🔒︎] Locked by {lock_state}")
         return
 
-    if isinstance(lock_state, dict) and item_type == 'multi' and hasattr(row, 'checkboxes'):
+    # FIX: Always process 'multi' checkboxes, even if lock_state is False/Empty
+    if item_type == 'multi' and hasattr(row, 'checkboxes'):
         if hasattr(row, 'input_widget') and row.input_widget: 
             row.input_widget.set_sensitive(True)
             
+        # Treat False/None as an empty dictionary so we unlock everything
+        micro_locks = lock_state if isinstance(lock_state, dict) else {}
+            
         for opt, chk in row.checkboxes.items():
-            if opt in lock_state:
+            if opt in micro_locks:
                 chk.set_sensitive(False)
-                chk.set_tooltip_text(f"Locked by {lock_state[opt]}")
+                chk.set_tooltip_text(f"[🔒︎] Locked by {micro_locks[opt]}")
             else:
                 chk.set_sensitive(True)
                 chk.set_tooltip_text("")

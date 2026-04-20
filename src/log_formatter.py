@@ -1,4 +1,4 @@
-import os, json, time, threading, re
+import os, json, time, datetime, threading, re
 from src.workbench_blueprint import LOG_DIR
 
 # Standard Rclone ANSI escape sequences to clean terminal colors
@@ -63,3 +63,28 @@ def stop_live_feed(profile: str):
     """Stops the tailer thread for a specific profile."""
     if profile in _active_tails:
         _active_tails[profile].set()
+
+def get_last_run_time(profile: str) -> str:
+    """Parses the raw ISO timestamp from the end of the profile's log file."""
+    path = os.path.join(LOG_DIR, f"{profile}_sync.jsonl")
+    if not os.path.exists(path): 
+        return "Never"
+    
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 8192))
+            lines = f.read().decode('utf-8', errors='ignore').splitlines()
+            
+        for line in reversed(lines):
+            if not line.strip(): continue
+            try:
+                data = json.loads(line)
+                if "time" in data:
+                    return data["time"] # Return raw string: "2026-04-18T19:09:46..."
+            except json.JSONDecodeError:
+                continue
+    except Exception:
+        pass
+        
+    return "Never"
