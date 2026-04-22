@@ -2,11 +2,21 @@ import gi, uuid
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk
 
+THEME = {
+    "critical": "#c0392b", # Red: Destructive / Abort
+    "decision": "#e67e22", # Orange: Logic altercations
+    "safety": "#27ae60", # Green: Safety nets
+    "operational": "#2980b9", # Blue: Standard behaviors
+    "heuristic": "#8e44ad", # Purple: Advanced Metadata
+    "system": "#7f8c8d", # Grey: Paths & Plumbing
+}
+
 def create_inventory_chip(item, item_id, equip_callback, disabled_keys=None):
     if disabled_keys is None: disabled_keys = {}
     is_disabled = item_id in disabled_keys
     
-    markup = f"<span foreground='{item.color}'><b>{item.label}</b></span>"
+    hex_color = THEME.get(getattr(item, 'severity', 'system'), "#ffffff")
+    markup = f"<span foreground='{hex_color}'><b>{item.label}</b></span>"
     if is_disabled: markup = f"<span foreground='grey' strikethrough='true'>{item.label}</span>"
 
     lbl = Gtk.Label(); lbl.set_markup(markup)
@@ -60,7 +70,8 @@ def create_canvas_row(item, base_key, row_key, val, lock_state, cb_change, cb_un
     row = Gtk.ListBoxRow(); row.key = row_key; row.set_activatable(False); row.set_selectable(False)
     card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5); card.get_style_context().add_class("canvas-card")
     
-    lbl = Gtk.Label(label=f"<span foreground='{item.color}'><b>{item.label}</b></span>", use_markup=True, xalign=0)
+    hex_color = THEME.get(getattr(item, 'severity', 'system'), "#ffffff")
+    lbl = Gtk.Label(label=f"<span foreground='{hex_color}'><b>{item.label}</b></span>", use_markup=True, xalign=0)
     if item.desc: lbl.set_tooltip_markup(item.desc)
         
     top = Gtk.Box(spacing=10); top.pack_start(lbl, True, True, 0)

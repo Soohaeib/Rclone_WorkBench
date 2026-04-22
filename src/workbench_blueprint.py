@@ -13,7 +13,7 @@ TRASH_CLOUD_NAME = '.rclone_trash_cloud'
 
 @dataclass
 class SmartPreset:
-    label: str; id: str; desc: str; color: str = "#3498db"
+    label: str; id: str; desc: str; color: str = "#ecf0f1"
     trigger_condition: str = "manual"; lifecycle: str = "persistent"
     auto_apply: bool = False; python_hook: str = ""
     expects: List[str] = field(default_factory=list)
@@ -22,7 +22,7 @@ class SmartPreset:
 
 @dataclass
 class ToolItem:
-    label: str; type: str; flag: str; short: str = ""; desc: str = ""; color: str = "#ecf0f1"
+    label: str; type: str; flag: str; short: str = ""; desc: str = ""; severity: str = "system"
     default: Any = ""; default_equipped: bool = False
     hidden: bool = False
     unit: str = ""           
@@ -34,7 +34,7 @@ class ToolItem:
     validation: Dict[str, Union[int, float]] = field(default_factory=dict)
 
 SMART_SCHEMA = {
-    "Smart Automations": [
+    "Smart Automations":[
         SmartPreset(
             label="Directed Resync", 
             id="preset_directed_resync", 
@@ -44,24 +44,36 @@ SMART_SCHEMA = {
             color="#e74c3c",
             python_hook="audit_resync_environment",
             desc="Automated baseline rebuild. Performs a local environment audit before allowing execution.",
-            expects=["--resync-mode", "--resync"], 
+            expects=["--resync-mode"], # Pulls the dropdown but leaves it UNLOCKED for the user
             rejects=["--track-renames"], 
-            satisfy={"--resync": True}   
+            satisfy={"--resync": True} # Automatically pulls AND LOCKS the dangerous resync flag
         ),
         SmartPreset(
-            label="Mount Safety Lock", id="preset_mount_safety", trigger_condition="always_on", lifecycle="persistent", auto_apply=False, color="#f39c12",
-            desc="Prevents catastrophic deletion if a drive unmounts by checking for a test file. (Triggers --check-access)",
-            expects=["--check-access", "--check-filename"],
-            satisfy={"--check-access": True, "--check-filename": "RCLONE_TEST"}
+            label="Mount Safety Lock", 
+            id="preset_mount_safety", 
+            trigger_condition="always_on", 
+            lifecycle="persistent", 
+            auto_apply=False, 
+            color="#f39c12",
+            desc="Prevents catastrophic deletion if a drive unmounts by checking for a test file.",
+            satisfy={"--check-access": True, "--check-filename": "RCLONE_TEST"} # No expects needed!
         ),
         SmartPreset(
-            label="Safe Trash Protection", id="preset_safe_trash", trigger_condition="always_on", lifecycle="persistent", auto_apply=False, color="#2ecc71",
+            label="Safe Trash Protection", 
+            id="preset_safe_trash", 
+            trigger_condition="always_on", 
+            lifecycle="persistent", 
+            auto_apply=False, 
+            color="#2ecc71",
             python_hook="setup_trash_bins",
             desc="Routes deleted/conflicted files to dedicated trash bins with dynamic real-time timestamps.",
-            expects=["--backup-dir1", "--backup-dir2", "--filter", "--conflict-suffix", "--suffix", "--suffix-keep-extension"],
             satisfy={
-                "--backup-dir1": TRASH_LOCAL_NAME, "--backup-dir2": TRASH_CLOUD_NAME, "--filter": f"- {TRASH_LOCAL_NAME}/**\n- {TRASH_CLOUD_NAME}/**",
-                "--conflict-suffix": ".old", "--suffix": ".old", "--suffix-keep-extension": True
+                "--backup-dir1": TRASH_LOCAL_NAME, 
+                "--backup-dir2": TRASH_CLOUD_NAME, 
+                "--filter": f"- {TRASH_LOCAL_NAME}/**\n- {TRASH_CLOUD_NAME}/**",
+                "--conflict-suffix": ".old", 
+                "--suffix": ".old", 
+                "--suffix-keep-extension": True
             }
         ),
         SmartPreset(
@@ -72,7 +84,6 @@ SMART_SCHEMA = {
             trigger_condition="always_on",
             lifecycle="persistent",
             python_hook="verify_star_topology_sentinels",
-            expects=["--check-access", "--resilient", "--recover", "--conflict-resolve"],
             satisfy={
                 "--check-access": True,
                 "--resilient": True,
@@ -84,42 +95,75 @@ SMART_SCHEMA = {
     ]
 }
 
-CONFIG_SCHEMA = {
-    "Hidden System Flags": [
-        ToolItem(label="Force Resync", type="check", flag="--resync", hidden=True, rejects=["--track-renames"], desc="Establishes a matching superset of files on both paths to create a new baseline."),
-        ToolItem(label="Resync Mode", type="combo", flag="--resync-mode", options=['newer', 'older', 'larger', 'smaller', 'path1', 'path2'], default="newer", hidden=True, expects=["--resync"], desc="Winner resolution during a resync."),
-        ToolItem(label="Check Access", type="check", flag="--check-access", hidden=True, desc="Aborts if the test file isn't found."),
-        ToolItem(label="Check Filename", type="entry", flag="--check-filename", hidden=True, desc="Name of the access test file.")
+BISYNC_SCHEMA = {
+    "Critical Control":[
+        ToolItem(label="Force Resync", type="check", flag="--resync", hidden=True, severity="critical", rejects=["--track-renames"], desc="Resets the sync history by performing a fresh, one-time merge of both paths."),
+        ToolItem(label="Resync Mode", type="combo", flag="--resync-mode", hidden=True, options=['newer', 'older', 'larger', 'smaller', 'path1', 'path2'], default="newer", satisfy={"--resync": True}, severity="critical", desc="Winner resolution strategy during a fresh Resync."),
+        ToolItem(label="Force Execution", type="check", flag="--force", default=False, severity="critical", desc="Bypasses safety checks. Use with extreme caution!"),
+        ToolItem(label="Check Access", type="check", flag="--check-access", hidden=True, desc="Ensures the connection is valid by looking for a specific test file before starting."),
+        ToolItem(label="Check Filename", type="entry", flag="--check-filename", hidden=True, satisfy={"--check-access": True}, desc="Name of the specific file to look for (e.g., RCLONE_TEST).")
     ],
-    "Bisync Rules": [
-        ToolItem(label="Compare Engine", type="multi", flag="--compare", options=["size", "modtime", "checksum"], color="#3498db", desc="Attributes checked to determine if a file has changed."),
-        ToolItem(label="Conflict Strategy", type="combo", flag="--conflict-resolve", options=["none", "newer", "older", "larger", "smaller", "path1", "path2"], default="none", color="#e67e22", desc="Auto-resolver when a file is modified on BOTH sides simultaneously."),
-        ToolItem(label="Conflict Loser", type="combo", flag="--conflict-loser", options=["num", "pathname", "delete"], default="num", color="#e67e22", expects=["--conflict-suffix"], desc="What happens to the overwritten file during a conflict."),
-        ToolItem(label="Conflict Suffix", type="entry", flag="--conflict-suffix", default="conflict", color="#e67e22", desc="String appended to a conflicting file if it is renamed instead of deleted."),
-        ToolItem(label="Sync Empty Dirs", type="check", flag="--create-empty-src-dirs", color="#48b6ff", rejects=["--remove-empty-dirs"], desc="Sync empty directories."),
-        ToolItem(label="Remove Empty Dirs", type="check", flag="--remove-empty-dirs", color="#48b6ff", rejects=["--create-empty-src-dirs"], desc="Remove empty directories."),
-        ToolItem(label="Force Execution", type="check", flag="--force", default=False, color="#e74c3c", desc="Bypasses safety checks. Use with caution!")
+    "Conflict and Decision Engine":[
+        ToolItem(label="Conflict Strategy", type="combo", flag="--conflict-resolve", options=["none", "newer", "older", "larger", "smaller", "path1", "path2"], default="none", severity="decision", desc="Auto-resolver when a file is modified on BOTH sides simultaneously."),
+        ToolItem(label="Conflict Loser", type="combo", flag="--conflict-loser", options=["num", "pathname", "delete"], default="num", severity="decision", expects=["--conflict-suffix"], desc="Action to take on the losing version of a conflicting file."),
+        ToolItem(label="Conflict Suffix", type="entry", flag="--conflict-suffix", default="conflict", severity="decision", desc="String appended to a conflicting file if it is renamed."),
+        ToolItem(label="Compare Engine", type="multi", flag="--compare", options=["size", "modtime", "checksum"], severity="operational", desc="Attributes checked to determine if a file has changed.")
     ],
-    "Safety and Trash": [
-        ToolItem(label="Dry Run", type="check", flag="--dry-run", short="-n", default_equipped=True, color="#2ecc71", desc="Trial run. Shows what would happen without making any actual changes."),
-        ToolItem(label="Local Trash", type="entry", flag="--backup-dir1", color="#2ecc71", desc="Directory to store deleted/overwritten local files."),
-        ToolItem(label="Cloud Trash", type="entry", flag="--backup-dir2", color="#2ecc71", desc="Directory to store deleted/overwritten cloud files."),
-        ToolItem(label="Trash Suffix", type="entry", flag="--suffix", color="#2ecc71", desc="Appended to files moved to the trash."),
-        ToolItem(label="Keep Extension", type="check", flag="--suffix-keep-extension", color="#2ecc71", desc="Puts the trash suffix BEFORE the file extension."),
-        ToolItem(label="Max Delete", type="number", flag="--max-delete", default=50, validation={"min": 0, "max": 100}, color="#e74c3c", desc="Safety threshold: Maximum percentage of deletions allowed."),
-        ToolItem(label="Filter Rules", type="text", flag="--filter", clone_limit=-1, color="#f1c40f", desc="Include (+) or Exclude (-) specific file patterns.")
+    "Safety Nets":[
+        ToolItem(label="Path 1 Trash", type="entry", flag="--backup-dir1", severity="safety", desc="Directory on Path 1 to isolate deleted/overwritten files."),
+        ToolItem(label="Path 2 Trash", type="entry", flag="--backup-dir2", severity="safety", desc="Directory on Path 2 to isolate deleted/overwritten files.")
     ],
-    "Engine Health": [
-        ToolItem(label="Resilient Mode", type="check", flag="--resilient", default_equipped=True, color="#3498db", desc="Continues syncing even if some files fail to transfer."),
-        ToolItem(label="Auto-Recover", type="check", flag="--recover", default_equipped=True, color="#3498db", desc="Automatically recovers from an interrupted previous sync."),
-        ToolItem(label="Max Lock Time", type="number", flag="--max-lock", default=2, unit="m", validation={"min": 0}, color="#9b59b6", desc="Time before a stale sync lock is automatically ignored."),
-        ToolItem(label="Verbose Output", type="count", flag="--verbose", short="-v", validation={"min": 0, "max": 3}, color="#95a5a6", desc="Increases the detail of the log output. Up to -v -v -v.")
+    "Advanced Tracking":[
+        ToolItem(label="Verify Sync", type="check", flag="--check-sync", default=True, desc="Double-checks the final listing after sync to ensure integrity."),
+        ToolItem(label="Remove Empty Dirs", type="check", flag="--remove-empty-dirs", severity="critical", rejects=["--create-empty-src-dirs"], desc="Deletes empty directories on the destination."),
+        ToolItem(label="Sync Only Slow Hash", type="check", flag="--slow-hash-sync-only", severity="heuristic", satisfy={"--compare": {"checksum": True}}, rejects=["--no-slow-hash", "--ignore-listing-checksum", "--download-hash"], desc="Skips slow hashes during the check phase (speed), but enforces them during the transfer phase (safety).")
     ],
-    "Advanced Flags": [
-        ToolItem(label="Track Renames", type="check", flag="--track-renames", color="#9b59b6", rejects=["--resync"], desc="Detects renamed files instead of treating them as delete+create."),
-        ToolItem(label="Ignore Listing Checksum", type="check", flag="--ignore-listing-checksum", color="#9b59b6", rejects=["--no-slow-hash", "--slow-hash-sync-only", "--download-hash"], desc="Disables retrieving/storing checksums in listing files."),
-        ToolItem(label="No Slow Hash", type="check", flag="--no-slow-hash", color="#9b59b6", expects=["--compare"], satisfy={"--compare": {"checksum": True}}, rejects=["--ignore-listing-checksum", "--slow-hash-sync-only", "--download-hash"], desc="Automatically skips checksums on remotes where they must be computed on-the-fly."),
-        ToolItem(label="Sync Only for Slow Hash", type="check", flag="--slow-hash-sync-only", color="#9b59b6", expects=["--compare"], satisfy={"--compare": {"checksum": True}}, rejects=["--ignore-listing-checksum", "--no-slow-hash", "--download-hash"], desc="Skips slow hashes when scanning for changes, but still performs hash verification during transfer."),
-        ToolItem(label="Download Hash", type="check", flag="--download-hash", color="#9b59b6", rejects=["--ignore-listing-checksum", "--no-slow-hash", "--slow-hash-sync-only"], desc="Forces hash generation by downloading the full file if no other hash is available.")
+    "Database and Metadata":[
+        ToolItem(label="Workdir Path", type="entry", flag="--workdir", severity="system", desc="Custom location for the sync database (Defaults to ~/.cache/rclone/bisync)."),
+        ToolItem(label="Force Clean Exit", type="check", flag="--force-bad-exit", hidden=True, severity="critical", desc="Clears the 'clean exit' lock, allowing a run even after a crash or interruption."),
+        ToolItem(label="No Cleanup", type="check", flag="--no-cleanup", severity="system", desc="Retains temporary listing files after the sync (Useful for debugging)."),
+        ToolItem(label="No Slow Hash", type="check", flag="--no-slow-hash", severity="heuristic", satisfy={"--compare": {"checksum": True}}, desc="Skips checksums if the cloud provider has to download the file to calculate them."),
+        ToolItem(label="Download Hash", type="check", flag="--download-hash", severity="heuristic", satisfy={"--compare": {"checksum": True}}, rejects=["--no-slow-hash"], desc="Forces hash generation by downloading the full file if no other hash is available."),
+        ToolItem(label="Ignore Listing Checksum", type="check", flag="--ignore-listing-checksum", severity="heuristic", desc="Disables retrieving/storing checksums in the listing cache (Speeds up slow remotes).")
+    ],
+    "Connection Health":[
+        ToolItem(label="Resilient Mode", type="check", flag="--resilient", default_equipped=True, severity="operational", desc="Continues syncing the rest of the files even if individual files error out."),
+        ToolItem(label="Auto-Recover", type="check", flag="--recover", default_equipped=True, severity="operational", desc="Automatically attempts to recover from an interrupted previous sync."),
+        ToolItem(label="Max Lock Time", type="number", flag="--max-lock", default=2, unit="m", validation={"min": 0}, severity="heuristic", desc="Force-start if a previous sync has been stuck/interrupted for this long.")
     ]
 }
+
+GLOBAL_SCHEMA = {
+    "Critical Control":[
+        ToolItem(label="Dry Run", type="check", flag="--dry-run", short="-n", default_equipped=True, severity="safety", desc="Simulation mode. Shows what would happen without touching any files.")
+    ],
+    "Conflict and Decision Engine":[
+        ToolItem(label="Compare Size Only", type="check", flag="--size-only", severity="operational", rejects=["--compare", "--ignore-size"], desc="Ignores timestamps; considers a file changed only if its size differs."),
+        ToolItem(label="Ignore Size", type="check", flag="--ignore-size", severity="#f39c12", rejects=["--size-only"], desc="Skips size checks; relies strictly on modtime or checksums.")
+    ],
+    "Safety Nets":[
+        ToolItem(label="Max Delete Count", type="number", flag="--max-delete", default=50, validation={"min": 0}, severity="critical", desc="Aborts the sync if the total deletion count exceeds this number."),
+        ToolItem(label="Max Delete Size", type="entry", flag="--max-delete-size", severity="critical", desc="Aborts the sync if the total size of deletions exceeds this limit (e.g., 100M, 2G)."),
+        ToolItem(label="Trash Suffix", type="entry", flag="--suffix", severity="safety", desc="Appended to files moved to the trash."),
+        ToolItem(label="Keep Extension", type="check", flag="--suffix-keep-extension", severity="safety", desc="Inserts the trash suffix BEFORE the file extension (e.g., file.old.txt).")
+    ],
+    "Advanced Tracking":[
+        ToolItem(label="Track Renames", type="check", flag="--track-renames", severity="heuristic", expects=["--track-renames-strategy"], rejects=["--resync"], desc="Intelligently detects renamed files to minimize re-uploading."),
+        ToolItem(label="Rename Strategy", type="combo", flag="--track-renames-strategy", options=["hash", "modtime", "leaf"], default="hash", satisfy={"--track-renames": True}, severity="heuristic", desc="Method used to match renamed files (Hash is safest)."),
+        ToolItem(label="Sync Empty Dirs", type="check", flag="--create-empty-src-dirs", severity="operational", rejects=["--remove-empty-dirs"], desc="Synchronizes empty directories."),
+        ToolItem(label="Filter Rules", type="text", flag="--filter", clone_limit=-1, severity="decision", desc="Include (+) or Exclude (-) specific file patterns."),
+        ToolItem(label="Filters File", type="entry", flag="--filters-file", severity="decision", desc="Path to a text file containing include (+) and exclude (-) patterns.")
+    ],
+    "Connection Health":[
+        ToolItem(label="Retries", type="number", flag="--retries", default=3, validation={"min": 1}, severity="system", desc="Number of times to retry a failed file transfer."),
+        ToolItem(label="Timeout", type="entry", flag="--timeout", default="10m", severity="system", desc="IO idle timeout (e.g., 10m, 1h). Increase this for low-bandwidth connections."),
+        ToolItem(label="Ignore Errors", type="check", flag="--ignore-errors", hidden=True, severity="critical", desc="Deletes files on destination even if there were I/O errors reading the source (Dangerous)."),
+        ToolItem(label="Verbose Output", type="count", flag="--verbose", short="-v", validation={"min": 0, "max": 3}, severity="system", desc="Increases the detail of the log output. Up to -v -v -v.")
+    ]
+}
+
+# Aggregate them into CONFIG_SCHEMA to maintain complete downstream compatibility.
+CONFIG_SCHEMA = {}
+for schema in (BISYNC_SCHEMA, GLOBAL_SCHEMA):
+    for cat, items in schema.items():
+        CONFIG_SCHEMA.setdefault(cat,[]).extend(items)

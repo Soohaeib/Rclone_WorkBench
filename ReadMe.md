@@ -6,7 +6,7 @@ This application provides a gamified, inventory-based framework for managing com
 
 The Workbench operates as a multi-layered ecosystem where data, logic, and execution are strictly decoupled.
 
-* **`workbench_blueprint.py`**: *The Data Authority*. Defines the `CONFIG_SCHEMA` (Tools) and `SMART_SCHEMA` (Procedures) using strict Python Dataclasses. This is the absolute source of truth for all configuration schemas.
+* **`workbench_blueprint.py`**: *The Data Authority*. Defines the `SMART_SCHEMA` (Procedures) and strictly divides the tools into two core domain dictionaries: `BISYNC_SCHEMA` (flags unique to the bisync protocol, like `--resync`) and `GLOBAL_SCHEMA` (rclone engine flags, like `--dry-run` and `--filter`). These are dynamically aggregated into a unified `CONFIG_SCHEMA` at runtime to maintain downstream compatibility. This file is the absolute source of truth for all configuration schemas.
 
 * **`rules_engine.py`**: *The Logic Processor*. A recursive engine that evaluates card relationships (`expects`, `rejects`, `satisfy`) to ensure a valid command-line state and enforces strict mathematical boundaries.
 
@@ -55,7 +55,7 @@ class SmartPreset:
     lifecycle: str           # "persistent" (stays on) or "one_time" (drops on exit 0)
     auto_apply: bool         # Apply payload without user confirmation
     python_hook: str         # The EXACT method name to call in smart_engine.py
-    color: str               # UI Hex color
+    color: str               # UI Hex color (Presets retain free-form hexes for visual distinction)
     desc: str                # Tooltip explanation
     expects: List[str]       # ToolItem flags pulled onto the canvas
     satisfy: Dict[str, Any]  # Value enforcement map (Locks UI inputs)
@@ -81,9 +81,9 @@ def audit_resync_environment(profile, local_path, remote_path, live_state):
     return live_state
 ```
 
-### 2. Anatomy of an Inventory Item (`CONFIG_SCHEMA`)
+### 2. Anatomy of an Inventory Item (`BISYNC_SCHEMA` & `GLOBAL_SCHEMA`)
 
-Each flag is defined as a `ToolItem`.
+To keep configurations semantically accurate, rclone flags are divided into `BISYNC_SCHEMA` (protocol-specific) and `GLOBAL_SCHEMA` (engine-wide). However, their internal structure is identical. Each flag is defined as a `ToolItem`.
 
 ```python
 @dataclass
@@ -91,6 +91,7 @@ class ToolItem:
     label: str
     type: str                # Data/Widget type mapping
     flag: str                # Standard long flag (e.g., "--max-lock")
+    severity: str            # Predefined UI Hex color set in `widget_factory.py` as THEME.
     short: str = ""          # Optional shorthand priority (e.g., "-v")
     default: Any = ""        # Starting value
     hidden: bool = False     # If True, removed from Inventory search (Smart Preset only)
@@ -100,6 +101,18 @@ class ToolItem:
     validation: Dict[str, Union[int, float]] # Strict math boundaries e.g. {"min": 0, "max": 100}
     expects, rejects, satisfy: # Dependency arrays (same as Smart Presets)
 ```
+
+#### The Semantic Severity Palette
+Instead of hardcoding hex colors, the `ToolItem` schema uses a semantic `severity` attribute. The `widget_factory.py` automatically maps these to the application's global GTK theme (`THEME` dict). 
+
+| Severity Level | Visual Color | Semantic Meaning & Use Case |
+| :--- | :--- | :--- |
+| **`critical`** | Red (`#c0392b`) | Destructive actions, abort thresholds, or safety overrides. |
+| **`decision`** | Orange (`#e67e22`) | Logic that drastically alters which files are synced (e.g., filters). |
+| **`safety`** | Green (`#27ae60`) | Non-destructive protections (e.g., trash bins, dry runs). |
+| **`operational`** | Blue (`#2980b9`) | Standard engine behaviors and resilience logic. |
+| **`heuristic`** | Purple (`#8e44ad`) | Advanced metadata, hashing, and tracking strategies. |
+| **`system`** | Grey (`#7f8c8d`) | System paths, plumbing, and verbosity (The default fallback). |
 
 #### Valid Types & Formatting
 
@@ -112,11 +125,17 @@ class ToolItem:
 | **`multi`**  | Checkboxes     | `--flag "opt1,opt2"`                 | Comma-separated list (e.g., `--compare`) |
 | **`number`** | Spin Button    | `--flag "50unit"`                    | Values needing math validation and units |
 | **`count`**  | Spin Button    | `-v -v -v` (Repeats short/long flag) | Verbose scaling, debug levels            |
+
+#### Dependency Optimization (The DRY Principle)
+You do not need to duplicate a flag in both `expects` and `satisfy`. 
+* Use `expects=["--flag"]` when you want to pull a tool onto the canvas but leave it **unlocked** for the user to configure.
+* Use `satisfy={"--flag": True}` when you want to pull a tool onto the canvas and **forcefully lock** its value, preventing the user from altering it. The engine will natively evaluate and apply any underlying `rejects` or `expects` that the forced tool possesses.
 ***
 
 ## Logic Engine & Split Mechanics
 
 The Workbench evaluates dependencies (`expects`, `rejects`, `satisfy`) recursively. If a Smart Preset `satisfies` a ToolItem with a specific value, that ToolItem is forced onto the canvas, locked to that value, and the user is physically prevented from modifying or deleting it.
+
 
 ### The Duplication/Split Mechanic (`clone_limit`)
 
