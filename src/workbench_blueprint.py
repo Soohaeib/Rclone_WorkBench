@@ -2,7 +2,8 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Union, Any
 
-APP_DIR = os.path.expanduser('~/Scripts/Rclone_WorkBench')
+# This automatically figures out where the app is installed
+APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RCLONE_CONF_PATH = os.path.expanduser('~/.config/rclone/rclone.conf')
 RCLONE_CACHE_DIR = os.path.expanduser('~/.cache/rclone/bisync')
 JSON_CONFIG_FILE = os.path.join(APP_DIR, 'bisync_settings.json')

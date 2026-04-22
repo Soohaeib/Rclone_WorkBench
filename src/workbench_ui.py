@@ -285,16 +285,7 @@ class InventoryWorkbench:
         self.global_cfg.setdefault('local_paths', {})[p] = self.path_entry.get_text()
         config_manager.save_config(self.global_cfg); self.check_dirty()
 
-    def post_sync_cleanup(self, profile):
-        p_cfg = self.global_cfg.get('remote_configs', {}).get(profile, {})
-        if any(p_cfg.pop(i.id, None) for i in SMART_SCHEMA.get("Smart Automations", []) if getattr(i, "lifecycle", "persistent") == "one_time" and p_cfg.get(i.id)):
-            # Safely gather keys, including numbers/counts
-            active_keys = [k for k, v in p_cfg.items() if v is True or (isinstance(v, str) and v) or (type(v) in [int, float])]
-            
-            # FIX: Pass p_cfg as the required active_values argument
-            fk, merged, lk, dk = rules_engine.evaluate_state(active_keys, p_cfg, self.items_lookup)
-            
-            self.global_cfg['remote_configs'][profile] = merged
-            config_manager.save_config(self.global_cfg)
-            if self.profile_combo.get_active_text() == profile: 
-                self._apply_new_state(fk, merged, lk, dk)
+    def reload_profile_if_active(self, profile, new_cfg):
+        self.global_cfg = new_cfg
+        if self.profile_combo.get_active_text() == profile:
+            self.load_data()

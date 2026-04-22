@@ -70,24 +70,44 @@ class SyncThread(threading.Thread):
             
             if self.app.workbench:
                 self.app.workbench.set_status(self.profile, False)
-                if not self.err:
-                    self.app.workbench.post_sync_cleanup(self.profile)
-                    import hashlib
-                    f_txt = "\n".join([v for k, v in live_state.items() if k.startswith('--filter') and isinstance(v, str)])
+                
+            if not self.err:
+                cfg = config_manager.load_config()
+                p_cfg = cfg.setdefault('remote_configs', {}).setdefault(self.profile, {})
+                
+                # 1. Update filter hashes safely
+                import hashlib
+                f_txt = "\n".join([v for k, v in live_state.items() if k.startswith('--filter') and isinstance(v, str)])
+                if 'filter_hashes' not in cfg:
+                    cfg['filter_hashes'] = {}
+                if f_txt:
+                    cfg['filter_hashes'][self.profile] = hashlib.md5(f_txt.encode()).hexdigest()
+                else:
+                    cfg['filter_hashes'].pop(self.profile, None)
+                
+                # 2. Cleanup one-time presets
+                dropped = False
+                for i in workbench_blueprint.SMART_SCHEMA.get("Smart Automations",[]):
+                    if getattr(i, "lifecycle", "persistent") == "one_time" and p_cfg.get(i.id):
+                        p_cfg.pop(i.id, None)
+                        # Remove the tools it forcefully equipped or expected so they don't linger
+                        for k in getattr(i, "satisfy", {}).keys():
+                            p_cfg.pop(k, None)
+                        for k in getattr(i, "expects",[]):
+                            p_cfg.pop(k, None)
+                        dropped = True
+                        
+                if dropped:
+                    active_keys =[k for k, v in p_cfg.items() if v is True or (isinstance(v, str) and v) or (type(v) in [int, float])]
+                    _, merged, _, _ = rules_engine.evaluate_state(active_keys, p_cfg, rules_engine.get_item_lookup())
+                    cfg['remote_configs'][self.profile] = merged
                     
-                    # NEW: Save the hash directly into the JSON config file
-                    cfg = config_manager.load_config()
-                    if 'filter_hashes' not in cfg:
-                        cfg['filter_hashes'] = {}
-                        
-                    if f_txt:
-                        cfg['filter_hashes'][self.profile] = hashlib.md5(f_txt.encode()).hexdigest()
-                    else:
-                        # Clean up the hash from JSON if filters were successfully removed
-                        cfg['filter_hashes'].pop(self.profile, None)
-                        
-                    config_manager.save_config(cfg)
-            
+                config_manager.save_config(cfg)
+                
+                # 3. Synchronize the UI thread safely
+                if self.app.workbench:
+                    GLib.idle_add(self.app.workbench.reload_profile_if_active, self.profile, cfg)
+                    
             GLib.idle_add(self.app.update_menu)
             
 class RCloneWorkbenchApp:
