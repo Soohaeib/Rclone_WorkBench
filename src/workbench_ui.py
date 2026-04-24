@@ -1,6 +1,7 @@
 import gi, os, subprocess
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
+from urllib.parse import unquote
 from src import config_manager, rules_engine, log_formatter, smart_engine, widget_factory
 from src.workbench_blueprint import LOG_DIR, TRASH_LOCAL_NAME, CONFIG_SCHEMA, SMART_SCHEMA
 
@@ -19,18 +20,31 @@ class LiveOutputPanel:
             header.pack_start(status, True, True, 0)
             
             def _btn(icon, tip, cb): b = Gtk.Button(tooltip_text=tip); b.add(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.BUTTON)); b.connect("clicked", cb); return b
-            header.pack_end(_btn("view-refresh-symbolic", "Reload Log", lambda _, x=p: self.reload_log(x)), False, False, 0)
+            
             header.pack_end(_btn("folder-open-symbolic", "Open Log Dir", lambda _, x=p: os.makedirs(LOG_DIR, exist_ok=True) or subprocess.Popen(['xdg-open', LOG_DIR])), False, False, 0)
-            header.pack_end(_btn("user-trash-symbolic", "Delete Log", lambda _, x=p: (os.remove(log) if os.path.exists(log := os.path.join(LOG_DIR, f"{x}_sync.jsonl")) else None) or self.tabs[x]['buffer'].set_text("[SYSTEM] Log deleted.\n")), False, False, 0)
+            
+            tv = Gtk.TextView(editable=False, cursor_visible=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+            
+            # Swapped to ymuse-delete-symbolic, and the trash button is gone!
+            header.pack_end(_btn("ymuse-delete-symbolic", "Delete Log", lambda _, x=p: (os.remove(log) if os.path.exists(log := os.path.join(LOG_DIR, f"{x}_sync.jsonl")) else None) or self.tabs[x]['buffer'].set_text("[SYSTEM] Log deleted.\n")), False, False, 0)
+            
+            header.pack_end(_btn("view-refresh-symbolic", "Reload Log", lambda _, x=p: self.reload_log(x)), False, False, 0)
             header.pack_end(_btn("edit-clear-symbolic", "Clear Display", lambda _, x=p: self.tabs[x]["buffer"].set_text("")), False, False, 0)
             
             vbox.pack_start(header, False, False, 0)
-            tv = Gtk.TextView(editable=False, cursor_visible=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+            
             tv.set_monospace(True); tv.get_style_context().add_class("log-view")
+            buf = tv.get_buffer()
+            buf.create_tag("DEBUG", foreground="#7f8c8d")
+            buf.create_tag("ERROR", foreground="#e74c3c", weight=700)
+            buf.create_tag("WARNING", foreground="#e67e22")
+            buf.create_tag("NOTICE", foreground="#3498db")
+            buf.create_tag("INFO") 
+            
             sw = Gtk.ScrolledWindow(); sw.set_shadow_type(Gtk.ShadowType.IN); sw.add(tv); vbox.pack_start(sw, True, True, 0)
             self.notebook.append_page(vbox, Gtk.Label(label=p.upper()))
             
-            self.tabs[p] = {'vbox': vbox, 'status': status, 'buffer': tv.get_buffer(), 'tv': tv, 'sw': sw}
+            self.tabs[p] = {'vbox': vbox, 'status': status, 'buffer': buf, 'tv': tv, 'sw': sw}
             log_formatter.start_live_feed(p, lambda a, x=p: GLib.idle_add(self.update_logs, x, a))
             
         self.notebook.connect("switch-page", lambda n, page, page_num: self.change_callback(n.get_tab_label(page).get_text()) if self.change_callback else None)
@@ -42,7 +56,7 @@ class LiveOutputPanel:
         if not (tab := self.tabs.get(profile)): return
         tab['buffer'].set_text("")
         if os.path.exists(path := os.path.join(LOG_DIR, f"{profile}_sync.jsonl")):
-            try: GLib.idle_add(self.update_logs, profile, [a for line in open(path, "r", encoding="utf-8") for a in log_formatter.format_line(line)])
+            try: GLib.idle_add(self.update_logs, profile,[a for line in open(path, "r", encoding="utf-8") for a in log_formatter.format_line(line)])
             except: pass
 
     def set_status(self, profile, is_running):
@@ -51,10 +65,19 @@ class LiveOutputPanel:
     def update_logs(self, profile, actions):
         if not (tab := self.tabs.get(profile)): return False
         scroll = False
-        for k, d in actions:
-            if k == "log": tab['buffer'].insert(tab['buffer'].get_end_iter(), str(d)); scroll = True
-            elif k == "stats": tab['status'].set_text(f"● {d.get('msg') or f'Transferred: {d.get('bytes',0)} | Speed: {d.get('speed',0)}/s' if isinstance(d, dict) else str(d) or 'Syncing...'}")
-        if scroll: tab['tv'].scroll_to_mark(tab['buffer'].create_mark(None, tab['buffer'].get_end_iter(), False), 0.05, True, 0, 1)
+        buf = tab['buffer']
+        for act in actions:
+            k = act[0]
+            if k == "log":
+                msg = act[1]
+                level = act[2] if len(act) > 2 else "INFO"
+                if not buf.get_tag_table().lookup(level): level = "INFO" 
+                buf.insert_with_tags_by_name(buf.get_end_iter(), str(msg), level)
+                scroll = True
+            elif k == "stats":
+                d = act[1]
+                tab['status'].set_text(f"● {d.get('msg') or f'Transferred: {d.get('bytes',0)} | Speed: {d.get('speed',0)}/s' if isinstance(d, dict) else str(d) or 'Syncing...'}")
+        if scroll: tab['tv'].scroll_to_mark(buf.create_mark(None, buf.get_end_iter(), False), 0.05, True, 0, 1)
         return False
 
 class InventoryWorkbench:
@@ -74,6 +97,21 @@ class InventoryWorkbench:
         self.search_entry, self.category_combo = self.builder.get_object("search_entry"), self.builder.get_object("category_combo")
         self.status_label = self.builder.get_object("status_label")
         
+        # --- Clean Global Path Drag and Drop ---
+        self.path_entry.drag_dest_set(Gtk.DestDefaults.ALL,[], Gdk.DragAction.COPY)
+        self.path_entry.drag_dest_add_uri_targets()
+        def _on_path_drop(wid, ctx, x, y, data, info, time):
+            if uris := data.get_uris():
+                path = unquote(uris[0].replace("file://", "").strip('\r\n'))
+                if os.path.isfile(path): path = os.path.dirname(path) # Clean files to dirs
+                wid.set_text(path)
+                ctx.finish(True, False, time)
+                wid.stop_emission_by_name("drag-data-received")
+                return True
+            return False
+        self.path_entry.connect("drag-data-received", _on_path_drop)
+        # ---------------------------------------
+
         self._setup_minimal_css(); self.setup_smart_presets()
         self.window.connect("delete-event", lambda *_: self.window.hide() or True)
         self.profile_combo.connect("changed", self.on_profile_changed)
@@ -95,8 +133,8 @@ class InventoryWorkbench:
 
         self.output_panel = LiveOutputPanel(self.remotes)
         self.output_panel.change_callback = self.sync_ui_to_log_tab
-        self.builder.get_object("live_output_hook").pack_start(self.output_panel.container, True, True, 0)
         
+        self.builder.get_object("live_output_hook").pack_start(self.output_panel.container, True, True, 0)
         self.category_combo.append_text("All Categories")
         [self.category_combo.append_text(c) for c in CONFIG_SCHEMA.keys()]; self.category_combo.set_active(0)
         [self.profile_combo.append_text(r) for r in self.remotes]; self.profile_combo.set_active(0)
@@ -114,7 +152,7 @@ class InventoryWorkbench:
 
     def setup_smart_presets(self):
         css = ""
-        for i in SMART_SCHEMA.get("Smart Automations", []):
+        for i in SMART_SCHEMA.get("Smart Automations",[]):
             h = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12); h.set_tooltip_text(i.desc); h.set_margin_start(8); h.set_margin_end(8)
             lbl = Gtk.Label(xalign=0); lbl.set_markup(f"<span foreground='{i.color}'><b>{i.label}</b></span>"); h.pack_start(lbl, True, True, 0)
             sw = Gtk.Switch(); sw.set_valign(Gtk.Align.CENTER); sw.set_name(n := f"smart_switch_{i.id}")
@@ -142,10 +180,9 @@ class InventoryWorkbench:
         self._is_syncing_profile = False
 
     def _gather_live_keys(self):
-        return [r.key for r in self.can_list.get_children()] + [k for k, b in self.smart_toggles.items() if b.get_active() and k not in [r.key for r in self.can_list.get_children()]]
+        return [r.key for r in self.can_list.get_children()] +[k for k, b in self.smart_toggles.items() if b.get_active() and k not in[r.key for r in self.can_list.get_children()]]
 
     def _gather_raw_values(self):
-        # Helper to grab the user's current canvas inputs
         vals = {r.key: widget_factory.extract_value(r, getattr(self.items_lookup[r.key.split('.')[0] if '.' in r.key else r.key], 'type', 'check')) for r in self.can_list.get_children()}
         vals.update({k: True for k, b in self.smart_toggles.items() if b.get_active()})
         return vals
@@ -212,11 +249,10 @@ class InventoryWorkbench:
         for cat, items in CONFIG_SCHEMA.items():
             if cat_filter != "All Categories" and cat != cat_filter: continue
             
-            if available := [i for i in items if i.flag not in excluded and not getattr(i, 'hidden', False) and str(i.default_equipped) != "0" and (not search or search in f"{i.label} {i.flag} {i.desc}".lower())]:
+            if available :=[i for i in items if i.flag not in excluded and not getattr(i, 'hidden', False) and str(i.default_equipped) != "0" and (not search or search in f"{i.label} {i.flag} {i.desc}".lower())]:
                 grp = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
                 lbl = Gtk.Label(xalign=0); lbl.set_markup(f"<span color='#888' size='small'><b>{cat.upper()}</b></span>"); grp.pack_start(lbl, False, False, 0)
                 flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE)
-                # Pass disabled_keys into the factory so it can gray out locked options
                 [flow.add(widget_factory.create_inventory_chip(i, i.flag, self.equip_logic, disabled_keys=disabled_keys)) for i in available]
                 grp.pack_start(flow, False, False, 0); self.inventory_container.pack_start(grp, False, False, 0)
         self.window.show_all()
@@ -228,7 +264,7 @@ class InventoryWorkbench:
         
         self.is_dirty = (self.global_cfg.get('local_paths', {}).get(p, "") != self.path_entry.get_text()) or any(
             (str(s_cfg.get(k)).strip() if s_cfg.get(k) not in [None, False] else "") != 
-            (str(c_cfg.get(k)).strip() if c_cfg.get(k) not in [None, False] else "") for k in set(s_cfg) | set(c_cfg))
+            (str(c_cfg.get(k)).strip() if c_cfg.get(k) not in[None, False] else "") for k in set(s_cfg) | set(c_cfg))
             
         self.status_label.set_markup("<span foreground='#e67e22'><b>[✗] Unsaved Changes</b></span>" if self.is_dirty else "<span foreground='#2ecc71'><b>[✓] Synced to Disk</b></span>")
         self.update_preview()
@@ -237,7 +273,7 @@ class InventoryWorkbench:
         p, lp = self.profile_combo.get_active_text() or "[PROFILE]", self.path_entry.get_text() or "[LOCAL_PATH]"
         raw_vals = self._gather_raw_values()
         
-        active_keys = [k for k, v in raw_vals.items() if v is True or (isinstance(v, str) and v) or (type(v) in [int, float])]
+        active_keys =[k for k, v in raw_vals.items() if v is True or (isinstance(v, str) and v) or (type(v) in[int, float])]
         _, fv, _, _ = rules_engine.evaluate_state(active_keys, raw_vals, self.items_lookup)
         
         p_state = {**raw_vals, **fv}
@@ -253,7 +289,7 @@ class InventoryWorkbench:
             
         try:
             self.preview_view.get_style_context().remove_class("console-error")
-            args = [f'"{a}"' if ' ' in str(a) else str(a) for a in config_manager.build_base_args(p, self.global_cfg, p_state)]
+            args =[f'"{a}"' if ' ' in str(a) else str(a) for a in config_manager.build_base_args(p, self.global_cfg, p_state)]
             self.preview_view.get_buffer().set_text(f"rclone bisync {'\"'+lp+'\"' if ' ' in lp else lp} {'\"'+p+':\"' if ' ' in p else p+':'} {' '.join(args)}")
             if hasattr(self, 'apply_btn'): self.apply_btn.set_sensitive(True)
         except Exception as e:
@@ -267,8 +303,8 @@ class InventoryWorkbench:
         
         prof_cfg = self.global_cfg.get('remote_configs', {}).get(p, {})
         
-        active_keys = {k for k, v in prof_cfg.items() if v is True or (isinstance(v, str) and v) or (type(v) in [int, float])}
-        active_keys.update(rec for rec in smart_engine.scan_environment(lp, p) if getattr(self.items_lookup.get(rec, object), "auto_apply", False))
+        active_keys = {k for k, v in prof_cfg.items() if v is True or (isinstance(v, str) and v) or (type(v) in[int, float])}
+        active_keys.update(rec for rec in smart_engine.scan_environment(lp, p, prof_cfg) if getattr(self.items_lookup.get(rec, object), "auto_apply", False))
             
         fk, fv, lk, dk = rules_engine.evaluate_state(list(active_keys), prof_cfg, self.items_lookup)
         self._apply_new_state(fk, {**prof_cfg, **fv}, lk, dk)

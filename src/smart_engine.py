@@ -9,11 +9,21 @@ def get_remote_type(profile):
             return cp.get(profile, 'type', fallback='')
     return ''
 
+def get_active_workdir(live_state):
+    from src.workbench_blueprint import RCLONE_CACHE_DIR
+    if live_state.get('--workdir'):
+        return os.path.expanduser(live_state['--workdir'])
+    if live_state.get('--cache-dir'):
+        return os.path.join(os.path.expanduser(live_state['--cache-dir']), 'bisync')
+    return RCLONE_CACHE_DIR
+
 def audit_resync_environment(profile, local_path, remote_path, live_state):
-    from src.workbench_blueprint import RCLONE_CACHE_DIR, APP_DIR
+    from src.workbench_blueprint import APP_DIR
     from src import config_manager
+    
+    workdir = get_active_workdir(live_state)
     anchor = os.path.basename(local_path.strip('/')) if local_path else profile
-    base_glob = os.path.join(RCLONE_CACHE_DIR, f"*{anchor}*")
+    base_glob = os.path.join(workdir, f"*{anchor}*")
     
     lst_files = glob.glob(f"{base_glob}.path1.lst")
     err_files = glob.glob(f"{base_glob}.path1.lst-err")
@@ -34,9 +44,6 @@ def audit_resync_environment(profile, local_path, remote_path, live_state):
     cfg = config_manager.load_config()
     cached_md5 = cfg.get('filter_hashes', {}).get(profile)
 
-    # This logic is correct. A resync is only mandatory if a hash exists and it doesn't match,
-    # or if a hash existed and has now been removed (meaning filters were deleted).
-    # A missing hash on the first run is NOT an error.
     if filter_text:
         current_md5 = hashlib.md5(filter_text.encode()).hexdigest()
         if cached_md5 is not None and current_md5 != cached_md5 and not is_resync_equipped:
@@ -46,9 +53,6 @@ def audit_resync_environment(profile, local_path, remote_path, live_state):
 
 
     # --- DIRECTED RESYNC SAFETY CHECKS (HARDENED) ---
-
-    # CLEVER CHECK 1: The Empty Directory Catastrophe.
-    # Block a RESYNC if the local path is empty to prevent wiping the remote.
     if is_resync_equipped and local_path and os.path.exists(local_path):
         try:
             if not os.listdir(local_path):
@@ -56,15 +60,11 @@ def audit_resync_environment(profile, local_path, remote_path, live_state):
         except Exception as e:
             live_state['_AUDIT_ERROR_PATH'] = f"Cannot read local path '{anchor}': {e}"
 
-    # CLEVER CHECK 2: The Unreliable Backend Problem.
-    # This check is excellent and remains unchanged.
     if is_resync_equipped and live_state.get('--resync-mode') in ['newer', 'older']:
         rtype = get_remote_type(profile.split(':')[0])
-        if rtype in ['photos', 'ftp', 'memory']: 
+        if rtype in['photos', 'ftp', 'memory']: 
             live_state['_AUDIT_ERROR_MODTIME'] = f"Backend '{rtype}' does not support accurate modtimes for '{live_state.get('--resync-mode')}'. Use 'path1' or 'size' to avoid data loss."
 
-    # CLEVER CHECK 3: The Mount Safety Lock.
-    # This check is excellent and remains unchanged. It's a great general safety net.
     if live_state.get('--check-access') and live_state.get('--check-filename'):
         fname = live_state.get('--check-filename')
         if local_path and os.path.exists(local_path):
@@ -73,10 +73,12 @@ def audit_resync_environment(profile, local_path, remote_path, live_state):
 
     return live_state
 
-def scan_environment(local_path, remote_profile):
-    from src.workbench_blueprint import RCLONE_CACHE_DIR
+def scan_environment(local_path, remote_profile, profile_cfg=None):
+    if profile_cfg is None: profile_cfg = {}
+    workdir = get_active_workdir(profile_cfg)
+    
     anchor = os.path.basename(local_path.strip('/')) if local_path else remote_profile
-    base_glob = os.path.join(RCLONE_CACHE_DIR, f"*{anchor}*")
+    base_glob = os.path.join(workdir, f"*{anchor}*")
     
     recs = {"preset_safe_trash"}
     if not glob.glob(f"{base_glob}.path1.lst") or glob.glob(f"{base_glob}.path1.lst-err") or glob.glob(f"{base_glob}.lck"):
@@ -103,16 +105,8 @@ def enforce_checksum_dependency(profile, local_path, remote_path, live_state):
     return live_state
 
 def verify_star_topology_sentinels(profile, local_path, remote_path, live_state):
-    """
-    Enforces strict safety checks for multi-device (Hub and Spoke) setups.
-    Ensures that a missing cloud drive doesn't wipe all local nodes.
-    """
-    # Hub-and-Spoke requires a sentinel file to protect the central hub
     if live_state.get('--check-access'):
         fname = live_state.get('--check-filename', 'RCLONE_TEST')
-        
-        # We ensure the user didn't accidentally raise the max-delete threshold too high
-        # for a distributed environment.
         if live_state.get('--max-delete', 100) > 10:
             live_state['_AUDIT_ERROR_TOPOLOGY'] = "Hub-and-Spoke requires --max-delete to be 10% or lower to prevent cascading mass deletions across devices."
             

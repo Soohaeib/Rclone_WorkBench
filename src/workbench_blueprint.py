@@ -57,7 +57,8 @@ SMART_SCHEMA = {
             auto_apply=False, 
             color="#f39c12",
             desc="Prevents catastrophic deletion if a drive unmounts by checking for a test file.",
-            satisfy={"--check-access": True, "--check-filename": "RCLONE_TEST"} # No expects needed!
+            expects=["--check-filename"],
+            satisfy={"--check-access": True} # No expects needed!
         ),
         SmartPreset(
             label="Safe Trash Protection", 
@@ -102,7 +103,7 @@ BISYNC_SCHEMA = {
         ToolItem(label="Resync Mode", type="combo", flag="--resync-mode", hidden=True, options=['newer', 'older', 'larger', 'smaller', 'path1', 'path2'], default="newer", satisfy={"--resync": True}, severity="critical", desc="Winner resolution strategy during a fresh Resync."),
         ToolItem(label="Force Execution", type="check", flag="--force", default=False, severity="critical", desc="Bypasses safety checks. Use with extreme caution!"),
         ToolItem(label="Check Access", type="check", flag="--check-access", hidden=True, desc="Ensures the connection is valid by looking for a specific test file before starting."),
-        ToolItem(label="Check Filename", type="entry", flag="--check-filename", hidden=True, satisfy={"--check-access": True}, desc="Name of the specific file to look for (e.g., RCLONE_TEST).")
+        ToolItem(label="Check Filename", type="entry", flag="--check-filename", hidden=True, desc="The name of the specific 'canary' file to look for (e.g., path/RCLONE_TEST).")
     ],
     "Conflict and Decision Engine":[
         ToolItem(label="Conflict Strategy", type="combo", flag="--conflict-resolve", options=["none", "newer", "older", "larger", "smaller", "path1", "path2"], default="none", severity="decision", desc="Auto-resolver when a file is modified on BOTH sides simultaneously."),
@@ -115,12 +116,12 @@ BISYNC_SCHEMA = {
         ToolItem(label="Path 2 Trash", type="entry", flag="--backup-dir2", severity="safety", desc="Directory on Path 2 to isolate deleted/overwritten files.")
     ],
     "Advanced Tracking":[
-        ToolItem(label="Verify Sync", type="check", flag="--check-sync", default=True, desc="Double-checks the final listing after sync to ensure integrity."),
+        ToolItem(label="Verify Sync", type="check", flag="--check-sync", severity="safety", default=True, desc="Double-checks the final listing after sync to ensure integrity."),
         ToolItem(label="Remove Empty Dirs", type="check", flag="--remove-empty-dirs", severity="critical", rejects=["--create-empty-src-dirs"], desc="Deletes empty directories on the destination."),
         ToolItem(label="Sync Only Slow Hash", type="check", flag="--slow-hash-sync-only", severity="heuristic", satisfy={"--compare": {"checksum": True}}, rejects=["--no-slow-hash", "--ignore-listing-checksum", "--download-hash"], desc="Skips slow hashes during the check phase (speed), but enforces them during the transfer phase (safety).")
     ],
     "Database and Metadata":[
-        ToolItem(label="Workdir Path", type="entry", flag="--workdir", severity="system", desc="Custom location for the sync database (Defaults to ~/.cache/rclone/bisync)."),
+        ToolItem(label="Workdir Path", type="entry", flag="--workdir", severity="system", rejects=["--cache-dir"], desc="Custom location for the sync database (Defaults to ~/.cache/rclone/bisync)."),
         ToolItem(label="Force Clean Exit", type="check", flag="--force-bad-exit", hidden=True, severity="critical", desc="Clears the 'clean exit' lock, allowing a run even after a crash or interruption."),
         ToolItem(label="No Cleanup", type="check", flag="--no-cleanup", severity="system", desc="Retains temporary listing files after the sync (Useful for debugging)."),
         ToolItem(label="No Slow Hash", type="check", flag="--no-slow-hash", severity="heuristic", satisfy={"--compare": {"checksum": True}}, desc="Skips checksums if the cloud provider has to download the file to calculate them."),
@@ -140,7 +141,7 @@ GLOBAL_SCHEMA = {
     ],
     "Conflict and Decision Engine":[
         ToolItem(label="Compare Size Only", type="check", flag="--size-only", severity="operational", rejects=["--compare", "--ignore-size"], desc="Ignores timestamps; considers a file changed only if its size differs."),
-        ToolItem(label="Ignore Size", type="check", flag="--ignore-size", severity="#f39c12", rejects=["--size-only"], desc="Skips size checks; relies strictly on modtime or checksums.")
+        ToolItem(label="Ignore Size", type="check", flag="--ignore-size", severity="operational", rejects=["--size-only"], desc="Skips size checks; relies strictly on modtime or checksums.")
     ],
     "Safety Nets":[
         ToolItem(label="Max Delete Count", type="number", flag="--max-delete", default=50, validation={"min": 0}, severity="critical", desc="Aborts the sync if the total deletion count exceeds this number."),
@@ -155,11 +156,14 @@ GLOBAL_SCHEMA = {
         ToolItem(label="Filter Rules", type="text", flag="--filter", clone_limit=-1, severity="decision", desc="Include (+) or Exclude (-) specific file patterns."),
         ToolItem(label="Filters File", type="entry", flag="--filters-file", severity="decision", desc="Path to a text file containing include (+) and exclude (-) patterns.")
     ],
+    "System Paths":[
+        ToolItem(label="Global Cache Dir", type="entry", flag="--cache-dir", severity="system", desc="Global cache directory for rclone operations. Bisync uses this if --workdir is not set.")
+    ],
     "Connection Health":[
         ToolItem(label="Retries", type="number", flag="--retries", default=3, validation={"min": 1}, severity="system", desc="Number of times to retry a failed file transfer."),
         ToolItem(label="Timeout", type="entry", flag="--timeout", default="10m", severity="system", desc="IO idle timeout (e.g., 10m, 1h). Increase this for low-bandwidth connections."),
         ToolItem(label="Ignore Errors", type="check", flag="--ignore-errors", hidden=True, severity="critical", desc="Deletes files on destination even if there were I/O errors reading the source (Dangerous)."),
-        ToolItem(label="Verbose Output", type="count", flag="--verbose", short="-v", validation={"min": 0, "max": 3}, severity="system", desc="Increases the detail of the log output. Up to -v -v -v.")
+        ToolItem(label="Verbose Output", type="count", flag="--verbose", short="-v", validation={"max": 1}, severity="system", desc="The app already handles the Level 1 verbosity for logs. Rclone supports increasing log noise upto Level 2 (very verbose: '-vv' or '-v -v').")
     ]
 }
 

@@ -16,18 +16,18 @@ The Workbench operates as a multi-layered ecosystem where data, logic, and execu
 
 * **`rclone_runner.py`**: *The Backend Executor*. Manages subprocess calls, ensures graceful `SIGINT` shutdowns, and pipes raw JSONL output.
 
-* **`log_formatter.py`**: *The Parser*. Translates raw rclone JSONL logs into human-readable actions for the UI live feed.
+* **`log_formatter.py`**: *The Parser*. Translates raw rclone JSONL logs into human-readable actions. It intelligently parses log severities (DEBUG, ERROR, WARNING), truncates massive internal engine state dumps to prevent UI freezes, and dynamically color-codes the UI live feed.
 
 * **`widget_factory.py`**: *The View/Factory*. Instantiates GTK widgets based on Dataclass properties and strictly enforces `clone_limit` duplication rules.
 
 * **`workbench_ui.py`**: *The Canvas Linker*. The GTK3 interface controller where users interact with the Inventory, Smart Presets, and the active Canvas.
 
-* **`app.py`**: *The Main Controller*. Manages the system tray, background threads, checks for Hook blockers, explicitly injects the `bisync` command, and safely triggers execution.
+* **`app.py`**: *The Main Controller*. Manages the system tray, background threads, checks for Hook blockers, explicitly injects the `bisync` command, and safely triggers execution. It evaluates UI state to build dynamic, context-aware context menus (e.g., dynamically resolving and enabling shortcuts to local trash bins).
 
 ***
 
 ### The 9-Point Environmental Audit
-Before any sync executes, `smart_engine.py` runs a lightning-fast local audit. If any of these fail, it injects an `_AUDIT_ERROR` key into the state, causing the Rules Engine to physically lock the UI's "Apply" button:
+Before any sync executes, `smart_engine.py` runs a lightning-fast local audit. It actively resolves your configured `--workdir` and `--cache-dir` system paths to locate internal states. If any of these fail, it injects an `_AUDIT_ERROR` key into the state, causing the Rules Engine to physically lock the UI's "Apply" button:
 1. **First-Run Detection**: Mandates a resync if no `.lst` files exist.
 2. **Filter Integrity**: Compares the current filter MD5 hash against the hash saved in `bisync_settings.json`.
 3. **Critical Lockout**: Detects `.lst-err` files from prior crashes.
@@ -150,7 +150,13 @@ If a `text` or `entry` item has a `clone_limit` set (e.g., `clone_limit=-1`), a 
 ### System Tray & Application Lifecycle
 
 * Run `python3 app.py` to initialize. The app parses `~/.config/rclone/rclone.conf` and creates an isolated background thread for each remote profile.
-* You can manually trigger syncs, gracefully terminate processes (SIGINT), or monitor real-time parsed log outputs directly from the tray.
+* **Context-Aware Tray:** You can manually trigger syncs, gracefully terminate processes (SIGINT), or monitor real-time parsed log outputs directly from the tray. The tray also calculates dynamic relative run-times (e.g., "5 mins ago") and features a dynamic **"Open Local Trash"** shortcut that calculates your active `--backup-dir1` path and grays itself out if the trash folder hasn't been created yet.
+
+### Quality of Life: Native Drag-and-Drop (DND)
+You do not need to manually type file paths. The Workbench fully supports native Linux Drag-and-Drop from Nautilus, Nemo, and Dolphin:
+* Drag a folder into the **Local Path** bar, and it will clean and set the absolute path.
+* Drag a file into a standard text `entry` (like `--filters-file`), and it will paste the absolute path.
+* Drag multiple files into a multi-line `text` box (like `--filter`), and it will safely parse them and paste each path onto a new line.
 
 ### The Workbench UI
 

@@ -1,5 +1,8 @@
 #usr/bin/env python3
-import gi, os, signal, threading, time, datetime, configparser
+import os
+os.environ["NO_AT_BRIDGE"] = "1" # Suppress GTK/Nemo DBus accessibility spam
+
+import gi, signal, threading, time, datetime, configparser
 gi.require_version('Gtk', '3.0'); gi.require_version('AppIndicator3', '0.1'); gi.require_version('Notify', '0.7')
 from gi.repository import Gtk, GLib, AppIndicator3, Notify
 from src import workbench_blueprint, config_manager, workbench_ui, rclone_runner, log_formatter, rules_engine, smart_engine
@@ -40,7 +43,7 @@ class SyncThread(threading.Thread):
                 self.profile, local_path, remote_path, live_state
             )
             
-            audit_errors = [v for k, v in live_state.items() if k.startswith('_AUDIT_ERROR')]
+            audit_errors =[v for k, v in live_state.items() if k.startswith('_AUDIT_ERROR')]
             
             if audit_errors:
                 self.err = True
@@ -59,7 +62,7 @@ class SyncThread(threading.Thread):
             flags = config_manager.build_base_args(self.profile, cfg, live_state)
             
             remote_full = f"{self.profile}:{remote_path}" if remote_path else f"{self.profile}:"
-            args = ["bisync", local_path, remote_full] + flags
+            args =["bisync", local_path, remote_full] + flags
             
             res = rclone_runner.run_sync_session(self.profile, args)
 
@@ -75,7 +78,6 @@ class SyncThread(threading.Thread):
                 cfg = config_manager.load_config()
                 p_cfg = cfg.setdefault('remote_configs', {}).setdefault(self.profile, {})
                 
-                # 1. Update filter hashes safely
                 import hashlib
                 f_txt = "\n".join([v for k, v in live_state.items() if k.startswith('--filter') and isinstance(v, str)])
                 if 'filter_hashes' not in cfg:
@@ -85,12 +87,10 @@ class SyncThread(threading.Thread):
                 else:
                     cfg['filter_hashes'].pop(self.profile, None)
                 
-                # 2. Cleanup one-time presets
                 dropped = False
                 for i in workbench_blueprint.SMART_SCHEMA.get("Smart Automations",[]):
                     if getattr(i, "lifecycle", "persistent") == "one_time" and p_cfg.get(i.id):
                         p_cfg.pop(i.id, None)
-                        # Remove the tools it forcefully equipped or expected so they don't linger
                         for k in getattr(i, "satisfy", {}).keys():
                             p_cfg.pop(k, None)
                         for k in getattr(i, "expects",[]):
@@ -104,7 +104,6 @@ class SyncThread(threading.Thread):
                     
                 config_manager.save_config(cfg)
                 
-                # 3. Synchronize the UI thread safely
                 if self.app.workbench:
                     GLib.idle_add(self.app.workbench.reload_profile_if_active, self.profile, cfg)
                     
@@ -129,6 +128,7 @@ class RCloneWorkbenchApp:
 
     def update_menu(self):
         m = Gtk.Menu()
+        import subprocess # Safely import for the xdg-open calls
         
         # Helper to calculate relative time dynamically
         def format_relative(iso_str):
@@ -146,7 +146,7 @@ class RCloneWorkbenchApp:
             except: 
                 return "Unknown"
 
-        # NEW: Helper to create a menu item with a native GTK symbolic icon
+        # Helper to create a menu item with a native GTK symbolic icon
         def create_icon_item(icon_name, text):
             item = Gtk.MenuItem()
             box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -154,12 +154,14 @@ class RCloneWorkbenchApp:
             lbl = Gtk.Label(label=text, xalign=0)
             box.pack_start(icon, False, False, 0)
             box.pack_start(lbl, True, True, 0)
-            box.show_all() # Ensure the custom layout is visible
+            box.show_all() 
             item.add(box)
             return item
 
+        # Load live config to resolve dynamic Trash paths per profile
+        cfg = config_manager.load_config()
+
         for p, t in self.threads.items():
-            # Keep the colored circles for the top-level menu (these are universally safe)
             state_icon = '🔴' if t.err else '🔵' if t.run_state else '⚪' if t.last == 'Never' else '🟢'
             item = Gtk.MenuItem(label=f"{state_icon} {p.upper():<12}")
             sub = Gtk.Menu()
@@ -177,7 +179,21 @@ class RCloneWorkbenchApp:
                 mi = Gtk.MenuItem(label=lbl); mi.connect('activate', cb); mi.set_sensitive(sens); sub.append(mi)
             sub.append(Gtk.SeparatorMenuItem())
             
-            # --- NATIVE GTK SYMBOLIC ICONS ---
+            # --- DYNAMIC TRASH RESOLVER ---
+            p_cfg = cfg.get('remote_configs', {}).get(p, {})
+            l_path = cfg.get('local_paths', {}).get(p, "")
+            t_name = p_cfg.get('--backup-dir1', workbench_blueprint.TRASH_LOCAL_NAME)
+            trash_path = t_name if os.path.isabs(t_name) else os.path.join(l_path, t_name)
+            
+            i_trash = create_icon_item("user-trash-symbolic", "Open Local Trash")
+            if os.path.exists(trash_path):
+                i_trash.connect("activate", lambda _, path=trash_path: subprocess.Popen(['xdg-open', path]))
+                i_trash.set_sensitive(True)
+            else:
+                i_trash.set_sensitive(False) # Gray it out if no trash exists!
+            sub.append(i_trash)
+            # ------------------------------
+            
             if t.err:
                 s_icon, s_text = "dialog-error-symbolic", "ERROR"
             elif t.run_state:
@@ -189,11 +205,9 @@ class RCloneWorkbenchApp:
             i_status.set_sensitive(False)
             sub.append(i_status)
             
-            # Added a clock icon for the Last Run row!
             i_last = create_icon_item("document-open-recent-symbolic", f"Last Run: {format_relative(t.last)}")
             i_last.set_sensitive(False)
             sub.append(i_last)
-            # ---------------------------------
             
             item.set_submenu(sub); m.append(item)
             
@@ -212,7 +226,7 @@ class RCloneWorkbenchApp:
 
     def on_quit(self, _):
         [rclone_runner.kill_process(t.proc, force=True) for t in self.threads.values() if t.proc]
-        if self.workbench: [log_formatter.stop_live_feed(p) for p in self.threads]
+        if self.workbench:[log_formatter.stop_live_feed(p) for p in self.threads]
         Gtk.main_quit()
 
 if __name__ == "__main__": RCloneWorkbenchApp(); Gtk.main()

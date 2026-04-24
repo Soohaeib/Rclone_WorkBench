@@ -6,9 +6,9 @@ ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 _active_tails = {}
 
 def format_line(line: str):
-    """Parses raw JSONL string into UI-friendly actions."""
+    """Parses raw JSONL string into UI-friendly actions and extracts log severity."""
     stripped = line.strip()
-    if not stripped: return []
+    if not stripped: return[]
 
     try:
         data = json.loads(stripped)
@@ -16,20 +16,29 @@ def format_line(line: str):
             return [("stats", data)]
         
         msg = ANSI_ESCAPE.sub('', data.get("msg", "")).strip()
-        if not msg: return []
+        if not msg: return[]
 
         obj = data.get("object", "")
         if obj and obj not in msg: msg = f"{msg}: {obj}"
         
         level = str(data.get("level", "INFO")).upper()
-        return [("log", f"[{level}] {msg}\n")]
+        
+        # Strip out massive internal Go pointer structs injected in Level 2 Logs (-vv)
+        if level == "DEBUG":
+            if "starting to march!: &{" in msg:
+                msg = msg.split("&{")[0] + "[Internal Engine State Hidden]"
+            elif "march completed. err: " in msg and "&{" in msg:
+                msg = msg.split("&{")[0] + "[Internal Engine State Hidden]"
+                
+        # Return tuple expanded to provide UI Level-Routing
+        return [("log", f"[{level}] {msg}\n", level)]
         
     except json.JSONDecodeError:
         clean = ANSI_ESCAPE.sub('', stripped).strip()
-        if not clean: return []
+        if not clean: return[]
         if " / " in clean and ("ETA" in clean or "%" in clean): 
             return [("stats", {"msg": clean})]
-        return [("log", clean + "\n")]
+        return[("log", clean + "\n", "INFO")]
 
 def start_live_feed(profile: str, ui_callback):
     """Tails the log file and streams updates to the UI safely."""
@@ -47,7 +56,7 @@ def start_live_feed(profile: str, ui_callback):
                         lines = f.readlines()
                         last_pos = f.tell()
                         
-                        actions = []
+                        actions =[]
                         for line in lines: 
                             actions.extend(format_line(line))
                         if actions: 
