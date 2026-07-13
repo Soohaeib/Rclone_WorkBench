@@ -24,11 +24,36 @@
             <property name="margin-start">16</property>
             <property name="margin-end">16</property>
             
-            <!-- Column 1 (Left): Empty space -->
+            <!-- Column 1 (Left): Global Tools -->
             <child>
-              <object class="GtkBox">
+              <object class="GtkBox" id="left_bar">
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
+                <property name="halign">start</property>
+                <property name="valign">center</property>
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkMenuButton" id="btn_info">
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="tooltip-text">Operating Environment Info</property>
+                    <style><class name="circular"/></style>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="visible">True</property>
+                        <property name="icon-name">dialog-information-symbolic</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_rclone_gui">
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="tooltip-text">Launch official Rclone Web Configurator</property>
+                    <style><class name="circular"/></style>
+                  </object>
+                </child>
               </object>
             </child>
 
@@ -52,11 +77,14 @@
                 <property name="valign">center</property> 
                 <child>
                   <object class="GtkButton" id="btn_sync">
-                    <property name="label">Sync</property>
                     <property name="visible">True</property>
                     <property name="can-focus">True</property>
+                    <property name="tooltip-text">Start Active Profile Sync Session</property>
                     <property name="always-show-image">True</property>
-                    <style><class name="suggested-action"/></style>
+                    <style>
+                      <class name="suggested-action"/>
+                      <class name="circular"/>
+                    </style>
                     <child>
                       <object class="GtkImage">
                         <property name="visible">True</property>
@@ -67,12 +95,15 @@
                 </child>
                 <child>
                   <object class="GtkButton" id="btn_stop">
-                    <property name="label">Stop</property>
                     <property name="visible">True</property>
                     <property name="can-focus">True</property>
                     <property name="sensitive">False</property>
+                    <property name="tooltip-text">Stop Active Sync Session</property>
                     <property name="always-show-image">True</property>
-                    <style><class name="destructive-action"/></style>
+                    <style>
+                      <class name="destructive-action"/>
+                      <class name="circular"/>
+                    </style>
                     <child>
                       <object class="GtkImage">
                         <property name="visible">True</property>
@@ -87,23 +118,11 @@
                     <property name="can-focus">True</property>
                     <property name="sensitive">False</property>
                     <property name="tooltip-text">Local Trash (Unavailable)</property>
+                    <style><class name="circular"/></style>
                     <child>
                       <object class="GtkImage">
                         <property name="visible">True</property>
                         <property name="icon-name">user-trash-symbolic</property>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkMenuButton" id="btn_info">
-                    <property name="visible">True</property>
-                    <property name="can-focus">True</property>
-                    <property name="tooltip-text">Operating Environment Info</property>
-                    <child>
-                      <object class="GtkImage">
-                        <property name="visible">True</property>
-                        <property name="icon-name">dialog-information-symbolic</property>
                       </object>
                     </child>
                   </object>

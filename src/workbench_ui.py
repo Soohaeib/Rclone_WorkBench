@@ -3,7 +3,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 from urllib.parse import unquote
 from src import config_manager, rules_engine, log_formatter, smart_engine, widget_factory
-from src.workbench_blueprint import LOG_DIR, TRASH_LOCAL_NAME, CONFIG_SCHEMA, SMART_SCHEMA
+from src.workbench_blueprint import LOG_DIR, TRASH_LOCAL_NAME, CONFIG_SCHEMA, SMART_SCHEMA, RCLONE_CONF_PATH
 
 class LiveOutputPanel:
     def __init__(self, remotes):
@@ -41,7 +41,10 @@ class LiveOutputPanel:
             sw = Gtk.ScrolledWindow(); sw.set_shadow_type(Gtk.ShadowType.IN); sw.add(tv); vbox.pack_start(sw, True, True, 0)
             self.notebook.append_page(vbox, Gtk.Label(label=p.upper()))
             
-            self.tabs[p] = {'vbox': vbox, 'status': status, 'buffer': buf, 'tv': tv, 'sw': sw}
+            # --- CRITICAL FIX: Create ONE persistent scroll mark to prevent rendering crashes ---
+            scroll_mark = buf.create_mark("scroll_end", buf.get_end_iter(), False)
+            
+            self.tabs[p] = {'vbox': vbox, 'status': status, 'buffer': buf, 'tv': tv, 'sw': sw, 'scroll_mark': scroll_mark}
             log_formatter.start_live_feed(p, lambda a, x=p: GLib.idle_add(self.update_logs, x, a))
             
         self.notebook.connect("switch-page", lambda n, page, page_num: self.change_callback(n.get_tab_label(page).get_text()) if self.change_callback else None)
@@ -74,7 +77,10 @@ class LiveOutputPanel:
             elif k == "stats":
                 d = act[1]
                 tab['status'].set_text(f"● {d.get('msg') or f'Transferred: {d.get('bytes',0)} | Speed: {d.get('speed',0)}/s' if isinstance(d, dict) else str(d) or 'Syncing...'}")
-        if scroll: tab['tv'].scroll_to_mark(buf.create_mark(None, buf.get_end_iter(), False), 0.05, True, 0, 1)
+        if scroll: 
+            # --- CRITICAL FIX: Move the single mark instead of creating thousands ---
+            buf.move_mark(tab['scroll_mark'], buf.get_end_iter())
+            tab['tv'].scroll_to_mark(tab['scroll_mark'], 0.0, False, 0.0, 1.0)
         return False
 
 
@@ -129,6 +135,15 @@ class InventoryWorkbench:
         self.info_box.show_all()
         self.info_popover.add(self.info_box)
         self.btn_info.set_popover(self.info_popover)
+        # ==============================================================================
+
+        # Rclone Web Portal Button
+        self.btn_rclone_gui = self.builder.get_object("btn_rclone_gui")
+        if self.btn_rclone_gui:
+            self.btn_rclone_gui.set_image(Gtk.Image.new_from_icon_name("web-browser-symbolic", Gtk.IconSize.BUTTON))
+            self.btn_rclone_gui.set_always_show_image(True)
+            self.btn_rclone_gui.connect("clicked", self.toggle_rclone_gui)
+        self.gui_process = None
         # ==============================================================================
 
         self.path_entry.drag_dest_set(Gtk.DestDefaults.ALL,[], Gdk.DragAction.COPY)
@@ -195,13 +210,92 @@ class InventoryWorkbench:
             rclone_runner.kill_process(t.proc, force=(t.kill_clicks > 0))
             t.kill_clicks += 1
             
-            # Update the UI button to warn the user that the next click is forceful
+            # Update the UI button tooltip to warn the user that the next click is forceful
             if t.run_state:
-                self.btn_stop.set_label("Force Stop" if t.kill_clicks == 1 else "Terminating...")
+                self.btn_stop.set_tooltip_text("Force Stop Session" if t.kill_clicks == 1 else "Terminating...")
 
     def open_local_trash(self, btn):
         if hasattr(self, 'current_trash_path') and os.path.exists(self.current_trash_path):
             subprocess.Popen(['xdg-open', self.current_trash_path])
+
+    # --- DYNAMIC CONFIGURATION PORTAL MODE ---
+    def toggle_rclone_gui(self, btn):
+        if not self.gui_process:
+            try:
+                import tempfile
+                import shutil
+                import os
+                
+                # Create a secure temporary runtime directory for path interception
+                self.sudo_interceptor_dir = tempfile.mkdtemp()
+                sudo_hook_path = os.path.join(self.sudo_interceptor_dir, "sudo")
+                
+                # Write an elegant pseudo-binary mapping background sudo requests to GUI PolicyKit
+                with open(sudo_hook_path, "w") as hook_file:
+                    hook_file.write("#!/bin/sh\nexec pkexec \"$@\"\n")
+                os.chmod(sudo_hook_path, 0o755)
+                
+                # Prepend the interceptor directory directly into the child process environment
+                portal_env = os.environ.copy()
+                portal_env["PATH"] = self.sudo_interceptor_dir + os.path.pathsep + portal_env.get("PATH", "")
+                
+                self.gui_process = subprocess.Popen(
+                    ["rclone", "gui"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    preexec_fn=os.setsid,
+                    env=portal_env
+                )
+                
+                # Toggle visual state using clean textless tooltips and symbolic state shifts
+                self.btn_rclone_gui.set_tooltip_text("Close Rclone Web Configuration Portal")
+                self.btn_rclone_gui.get_style_context().add_class("destructive-action")
+                
+                self.btn_sync.set_sensitive(False)
+                self.btn_stop.set_sensitive(False)
+                self.btn_trash.set_sensitive(False)
+                self.btn_info.set_sensitive(False)
+                self.profile_combo.set_sensitive(False)
+                self.path_entry.set_sensitive(False)
+                self.main_stack.set_sensitive(False)
+                self.builder.get_object("btn_reset").set_sensitive(False)
+                if undo := self.builder.get_object("btn_undo"): undo.set_sensitive(False)
+                
+            except Exception as e:
+                self.status_label.set_markup(f"<span foreground='#e74c3c'><b>Failed to start Web GUI: {e}</b></span>")
+        else:
+            import signal
+            import shutil
+            import os
+            try:
+                os.killpg(os.getpgid(self.gui_process.pid), signal.SIGTERM)
+            except: pass
+            self.gui_process = None
+            
+            # Clean up the localized runtime interceptor safely
+            if hasattr(self, 'sudo_interceptor_dir') and self.sudo_interceptor_dir:
+                shutil.rmtree(self.sudo_interceptor_dir, ignore_errors=True)
+                self.sudo_interceptor_dir = None
+            
+            # Return portal button back to its initial textless entry state
+            self.btn_rclone_gui.set_tooltip_text("Launch official Rclone Web Configurator")
+            self.btn_rclone_gui.get_style_context().remove_class("destructive-action")
+            
+            self.profile_combo.set_sensitive(True)
+            self.path_entry.set_sensitive(True)
+            self.main_stack.set_sensitive(True)
+            self.builder.get_object("btn_reset").set_sensitive(True)
+            if undo := self.builder.get_object("btn_undo"): undo.set_sensitive(True)
+            
+            self.app.rc.read(RCLONE_CONF_PATH)
+            valid_remotes = self.app.rc.sections()
+            config_manager.prune_orphaned_remotes(valid_remotes)
+            for r in valid_remotes:
+                config_manager.ensure_profile_exists(r)
+                
+            self.global_cfg = config_manager.load_config()
+            self.load_data()
+
 
     def focus_profile(self, profile): self.main_stack.set_visible_child_name("page1"); self.output_panel.focus_profile(profile)
     def focus_workbench(self): self.main_stack.set_visible_child_name("page0")
@@ -211,8 +305,8 @@ class InventoryWorkbench:
         if self.profile_combo.get_active_text() == profile:
             self.btn_sync.set_sensitive(not is_running)
             self.btn_stop.set_sensitive(is_running)
-            # Reset the button text back to normal when a sync stops/starts
-            self.btn_stop.set_label("Stop")
+            # Reset the button tooltip back to normal when a sync stops/starts
+            self.btn_stop.set_tooltip_text("Stop Active Sync Session")
     
     def show_all(self): self.window.show_all()
     def present(self): self.window.present()
