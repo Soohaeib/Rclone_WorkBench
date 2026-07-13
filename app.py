@@ -163,7 +163,7 @@ class RCloneWorkbenchApp:
 
         for p, t in self.threads.items():
             state_icon = '🔴' if t.err else '🔵' if t.run_state else '⚪' if t.last == 'Never' else '🟢'
-            item = Gtk.MenuItem(label=f"{state_icon} {p.upper():<12}")
+            item = Gtk.MenuItem(label=f"{state_icon} {p:<12}")
             sub = Gtk.Menu()
             
             kill_lbl = "Destroy Process" if t.kill_clicks > 0 else "Abandon Process"
