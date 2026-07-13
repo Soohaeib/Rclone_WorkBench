@@ -332,15 +332,31 @@
                     <property name="can-focus">False</property>
                     <property name="spacing">12</property>
                     <property name="margin-top">8</property>
+                    <!-- UNDO BUTTON: Reverts unsaved changes back to saved disk state -->
                     <child>
-                      <object class="GtkButton" id="btn_reset">
+                      <object class="GtkButton" id="btn_undo">
                         <property name="visible">True</property>
                         <property name="can-focus">True</property>
-                        <property name="tooltip-text" translatable="yes">Reset Defaults</property>
+                        <property name="tooltip-text" translatable="yes">Undo Unsaved Changes</property>
                         <child>
                           <object class="GtkImage">
                             <property name="visible">True</property>
                             <property name="icon-name">edit-undo-symbolic</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    
+                    <!-- RESET BUTTON: Wipes all modifications back to factory blueprints -->
+                    <child>
+                      <object class="GtkButton" id="btn_reset">
+                        <property name="visible">True</property>
+                        <property name="can-focus">True</property>
+                        <property name="tooltip-text" translatable="yes">Reset Factory Defaults</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="visible">True</property>
+                            <property name="icon-name">view-refresh-symbolic</property>
                           </object>
                         </child>
                       </object>

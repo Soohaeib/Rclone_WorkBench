@@ -121,8 +121,34 @@ class InventoryWorkbench:
         
         self.builder.get_object("btn_toggle_smart").connect('clicked', lambda _: self.builder.get_object("smart_revealer").set_reveal_child(not self.builder.get_object("smart_revealer").get_reveal_child()))
         self.builder.get_object("btn_toggle_preview").connect('clicked', lambda _: self.builder.get_object("preview_revealer").set_reveal_child(not self.builder.get_object("preview_revealer").get_reveal_child()))
-        self.builder.get_object("btn_reset").connect("clicked", lambda _: setattr(self, 'global_cfg', config_manager.load_config()) or self.load_data())
+        
+        # --- RESET DROPDOWN MENU ---
+        def on_reset_clicked(btn):
+            menu = Gtk.Menu()
+            
+            i_default = Gtk.MenuItem(label="⟳ Reset to Stable Defaults")
+            i_default.connect("activate", lambda _: self.reset_to_factory_defaults(None))
+            menu.append(i_default)
+            
+            i_last = Gtk.MenuItem(label="↩ Revert to Last Saved State")
+            i_last.connect("activate", lambda _: setattr(self, 'global_cfg', config_manager.load_config()) or self.load_data())
+            menu.append(i_last)
+            
+            menu.show_all()
+            menu.popup_at_widget(btn, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None)
+
+        self.builder.get_object("btn_reset").connect("clicked", on_reset_clicked)
+        
+        # Keep btn_undo safely wired if it still exists in your XML layout to prevent errors
+        if undo_btn := self.builder.get_object("btn_undo"):
+            undo_btn.connect("clicked", lambda _: setattr(self, 'global_cfg', config_manager.load_config()) or self.load_data())
+        # ---------------------------
+        
         self.apply_btn.connect("clicked", self.save_config)
+        
+        # --- START REAL-TIME OVERDRIVE POLLER ---
+        GLib.timeout_add(2000, self.realtime_overdrive_poll)
+        # ----------------------------------------
         
         def _browse(_):
             d = Gtk.FileChooserDialog(title="Select Local Directory", parent=self.window, action=Gtk.FileChooserAction.SELECT_FOLDER)
@@ -202,8 +228,19 @@ class InventoryWorkbench:
         if item_id == "preset_safe_trash" and switch.get_active() and (lp := self.path_entry.get_text()) and os.path.exists(lp):
             try: os.makedirs(os.path.join(lp, TRASH_LOCAL_NAME), exist_ok=True)
             except: pass
+            
         fk, fv, lk, dk = rules_engine.evaluate_state(self._gather_live_keys(), self._gather_raw_values(), self.items_lookup)
-        self._apply_new_state(fk, fv, lk, dk); self.check_dirty()
+        self._apply_new_state(fk, fv, lk, dk)
+        
+        # --- OVERDRIVE AUTO-MAXIMIZE ---
+        if item_id == "preset_overdrive_sync" and switch.get_active():
+            bounds = smart_engine.get_hardware_bounds()
+            for row in self.can_list.get_children():
+                if row.key == '--checkers': widget_factory.inject_value(row, self.items_lookup['--checkers'], bounds["--checkers"])
+                elif row.key == '--transfers': widget_factory.inject_value(row, self.items_lookup['--transfers'], bounds["--transfers"])
+        # -------------------------------
+        
+        self.check_dirty()
 
     def _apply_new_state(self, target_keys, values_dict, locked_keys, disabled_keys):
         self._updating_rules = True
@@ -273,6 +310,17 @@ class InventoryWorkbench:
         p, lp = self.profile_combo.get_active_text() or "[PROFILE]", self.path_entry.get_text() or "[LOCAL_PATH]"
         raw_vals = self._gather_raw_values()
         
+        # --- DYNAMIC HARDWARE BOUNDS ---
+        is_overdrive = raw_vals.get('preset_overdrive_sync', False)
+        hw_bounds = smart_engine.get_hardware_bounds()
+        
+        for row in self.can_list.get_children():
+            if row.key == '--checkers':
+                widget_factory.update_spin_bounds(row, hw_bounds["--checkers"] if is_overdrive else 1000000)
+            elif row.key == '--transfers':
+                widget_factory.update_spin_bounds(row, hw_bounds["--transfers"] if is_overdrive else 1000000)
+        # -------------------------------
+        
         active_keys =[k for k, v in raw_vals.items() if v is True or (isinstance(v, str) and v) or (type(v) in[int, float])]
         _, fv, _, _ = rules_engine.evaluate_state(active_keys, raw_vals, self.items_lookup)
         
@@ -325,3 +373,44 @@ class InventoryWorkbench:
         self.global_cfg = new_cfg
         if self.profile_combo.get_active_text() == profile:
             self.load_data()
+
+    def reset_to_factory_defaults(self, btn):
+        if not (p := self.profile_combo.get_active_text()): 
+            return
+            
+        # Re-derive factory blueprint default selections for this profile
+        factory_defaults = {
+            getattr(item, 'flag', ''): getattr(item, 'default', "") if item.type != 'check' else False 
+            for cat in CONFIG_SCHEMA.values() for item in cat if getattr(item, 'flag', None)
+        }
+        
+        # Overwrite current state in memory and force-refresh the canvas views
+        self.global_cfg.setdefault('remote_configs', {})[p] = factory_defaults
+        self.load_data()
+
+    def realtime_overdrive_poll(self):
+        """Polls hardware every 2 seconds. Visually scales UI limits if RAM/CPU drops."""
+        # Only poll if Overdrive is active
+        if not self.smart_toggles.get("preset_overdrive_sync", Gtk.Switch()).get_active():
+            return True 
+
+        bounds = smart_engine.get_hardware_bounds()
+        changed = False
+
+        for row in self.can_list.get_children():
+            if row.key in ['--checkers', '--transfers'] and hasattr(row, 'input_widget'):
+                adj = row.input_widget.get_adjustment()
+                new_max = bounds[row.key]
+                
+                # If hardware capacity dropped, shrink the UI limits dynamically
+                if adj.get_upper() != new_max:
+                    widget_factory.update_spin_bounds(row, new_max)
+                    # Force the user's value down if it is suddenly above the new limit
+                    if adj.get_value() > new_max:
+                        adj.set_value(new_max)
+                    changed = True
+
+        if changed:
+            self.check_dirty()
+            
+        return True # Keep the GTK timer loop alive

@@ -170,3 +170,11 @@ def inject_value(row, item, val):
         if str(val) in (opts := getattr(item, 'options',[])): row.input_widget.set_active(opts.index(str(val)))
     elif t == 'text' and hasattr(row, 'input_widget'): row.input_widget.get_buffer().set_text(str(val or ""))
     elif t in ['number', 'count'] and hasattr(row, 'input_widget'): row.input_widget.set_value(int(val or 0))
+
+def update_spin_bounds(row, max_val):
+    """Dynamically updates the UI boundaries for spin buttons."""
+    if hasattr(row, 'input_widget') and hasattr(row.input_widget, 'get_adjustment'):
+        adj = row.input_widget.get_adjustment()
+        # Only update if different to prevent GTK signal spam/flickering
+        if adj.get_upper() != max_val:
+            adj.set_upper(max_val)

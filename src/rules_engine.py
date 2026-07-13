@@ -89,11 +89,17 @@ def evaluate_state(active_keys, active_values, item_lookup):
     return f_keys, f_vals, l_keys, d_keys
 
 def validate_state(live_state, lookup):
+    # Dynamically inject the system resource validation layer
+    from src import smart_engine
+    live_state = smart_engine.enforce_resource_limits(live_state)
+    
     errors = {}
     for k, v in live_state.items():
         if k.startswith('_AUDIT_ERROR'):
             clean_key = k.replace('_AUDIT_ERROR_', 'Audit Failure (') + ')'
             errors[clean_key] = str(v)
+            
+    # ... rest of the existing validation loop continues below ...
             
     for k, v in live_state.items():
         base_key = k.split('.')[0] if '.' in k else k

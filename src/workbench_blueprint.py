@@ -93,7 +93,22 @@ SMART_SCHEMA = {
                 "--conflict-resolve": "newer",
                 "--max-delete": 5
             }
-        )
+        ),
+        SmartPreset(
+            label="Overdrive Sync", 
+            id="preset_overdrive_sync", 
+            trigger_condition="manual", 
+            lifecycle="persistent", 
+            auto_apply=False, 
+            color="#3498db",
+            desc="Pushes parallel operations to the absolute limit with a 5% safety buffer to prevent freezing.",
+            expects=["--checkers", "--transfers"], 
+            satisfy={
+                "--check-sync": "false", # <--- CHANGE THIS TO A STRING
+                "--fast-list": True,
+                "--no-slow-hash": True
+            }
+        ),
     ]
 }
 
@@ -109,14 +124,14 @@ BISYNC_SCHEMA = {
         ToolItem(label="Conflict Strategy", type="combo", flag="--conflict-resolve", options=["none", "newer", "older", "larger", "smaller", "path1", "path2"], default="none", severity="decision", desc="Auto-resolver when a file is modified on BOTH sides simultaneously."),
         ToolItem(label="Conflict Loser", type="combo", flag="--conflict-loser", options=["num", "pathname", "delete"], default="num", severity="decision", expects=["--conflict-suffix"], desc="Action to take on the losing version of a conflicting file."),
         ToolItem(label="Conflict Suffix", type="entry", flag="--conflict-suffix", default="conflict", severity="decision", desc="String appended to a conflicting file if it is renamed."),
-        ToolItem(label="Compare Engine", type="multi", flag="--compare", options=["size", "modtime", "checksum"], severity="operational", desc="Attributes checked to determine if a file has changed.")
+        ToolItem(label="Compare Engine", type="multi", flag="--compare", options=["size", "modtime", "checksum"], default="size,modtime", severity="operational", desc="Attributes checked to determine if a file has changed.")
     ],
     "Safety Nets":[
         ToolItem(label="Path 1 Trash", type="entry", flag="--backup-dir1", severity="safety", desc="Directory on Path 1 to isolate deleted/overwritten files."),
         ToolItem(label="Path 2 Trash", type="entry", flag="--backup-dir2", severity="safety", desc="Directory on Path 2 to isolate deleted/overwritten files.")
     ],
     "Advanced Tracking":[
-        ToolItem(label="Verify Sync", type="check", flag="--check-sync", severity="safety", default=True, desc="Double-checks the final listing after sync to ensure integrity."),
+        ToolItem(label="Verify Sync", type="combo", flag="--check-sync", options=["true", "false", "only"], default="true", severity="safety", desc="Double-checks the final listing after sync to ensure integrity."),
         ToolItem(label="Remove Empty Dirs", type="check", flag="--remove-empty-dirs", severity="critical", rejects=["--create-empty-src-dirs"], desc="Deletes empty directories on the destination."),
         ToolItem(label="Sync Only Slow Hash", type="check", flag="--slow-hash-sync-only", severity="heuristic", satisfy={"--compare": {"checksum": True}}, rejects=["--no-slow-hash", "--ignore-listing-checksum", "--download-hash"], desc="Skips slow hashes during the check phase (speed), but enforces them during the transfer phase (safety).")
     ],
@@ -144,7 +159,7 @@ GLOBAL_SCHEMA = {
         ToolItem(label="Ignore Size", type="check", flag="--ignore-size", severity="operational", rejects=["--size-only"], desc="Skips size checks; relies strictly on modtime or checksums.")
     ],
     "Safety Nets":[
-        ToolItem(label="Max Delete Count", type="number", flag="--max-delete", default=50, validation={"min": 0}, severity="critical", desc="Aborts the sync if the total deletion count exceeds this number."),
+        ToolItem(label="Max Delete Count", type="number", flag="--max-delete", default=15, validation={"min": 0}, severity="critical", desc="Aborts the sync if the total deletion count exceeds this number."),
         ToolItem(label="Max Delete Size", type="entry", flag="--max-delete-size", severity="critical", desc="Aborts the sync if the total size of deletions exceeds this limit (e.g., 100M, 2G)."),
         ToolItem(label="Trash Suffix", type="entry", flag="--suffix", severity="safety", desc="Appended to files moved to the trash."),
         ToolItem(label="Keep Extension", type="check", flag="--suffix-keep-extension", severity="safety", desc="Inserts the trash suffix BEFORE the file extension (e.g., file.old.txt).")
@@ -160,10 +175,13 @@ GLOBAL_SCHEMA = {
         ToolItem(label="Global Cache Dir", type="entry", flag="--cache-dir", severity="system", desc="Global cache directory for rclone operations. Bisync uses this if --workdir is not set.")
     ],
     "Connection Health":[
-        ToolItem(label="Retries", type="number", flag="--retries", default=3, validation={"min": 1}, severity="system", desc="Number of times to retry a failed file transfer."),
-        ToolItem(label="Timeout", type="entry", flag="--timeout", default="10m", severity="system", desc="IO idle timeout (e.g., 10m, 1h). Increase this for low-bandwidth connections."),
+        ToolItem(label="Retries", type="number", flag="--retries", default=5, validation={"min": 1}, severity="system", desc="Number of times to retry a failed file transfer."),
+        ToolItem(label="Timeout", type="entry", flag="--timeout", default="15m", severity="system", desc="IO idle timeout (e.g., 10m, 1h). Increase this for low-bandwidth connections."),
         ToolItem(label="Ignore Errors", type="check", flag="--ignore-errors", hidden=True, severity="critical", desc="Deletes files on destination even if there were I/O errors reading the source (Dangerous)."),
-        ToolItem(label="Verbose Output", type="count", flag="--verbose", short="-v", validation={"max": 1}, severity="system", desc="The app already handles the Level 1 verbosity for logs. Rclone supports increasing log noise upto Level 2 (very verbose: '-vv' or '-v -v').")
+        ToolItem(label="Verbose Output", type="count", flag="--verbose", short="-v", validation={"max": 1}, severity="system", desc="The app already handles the Level 1 verbosity for logs. Rclone supports increasing log noise upto Level 2 (very verbose: '-vv' or '-v -v')."),
+        ToolItem(label="Fast List", type="check", flag="--fast-list", severity="heuristic", desc="Uses fewer API calls by loading the whole directory into RAM. High memory usage!"),
+        ToolItem(label="Checkers", type="number", flag="--checkers", default=4, validation={"min": 1}, severity="system", desc="Number of parallel file comparison threads."),
+        ToolItem(label="Transfers", type="number", flag="--transfers", default=2, validation={"min": 1}, severity="system", desc="Number of parallel file uploads/downloads."),
     ]
 }
 

@@ -71,7 +71,15 @@ def audit_resync_environment(profile, local_path, remote_path, live_state):
             if not os.path.exists(os.path.join(local_path, fname)):
                 live_state['_AUDIT_ERROR_ACCESS'] = f"Sentinel file '{fname}' missing from Local path! Drive may be unmounted."
 
-    return live_state
+    # ... existing logic at the bottom of audit_resync_environment ...
+    if live_state.get('--check-access') and live_state.get('--check-filename'):
+        fname = live_state.get('--check-filename')
+        if local_path and os.path.exists(local_path):
+            if not os.path.exists(os.path.join(local_path, fname)):
+                live_state['_AUDIT_ERROR_ACCESS'] = f"Sentinel file '{fname}' missing from Local path! Drive may be unmounted."
+
+    # ENFORCE RESOURCE BOUNDS RIGHT BEFORE RETURNING
+    return enforce_resource_limits(live_state)
 
 def scan_environment(local_path, remote_profile, profile_cfg=None):
     if profile_cfg is None: profile_cfg = {}
@@ -110,4 +118,60 @@ def verify_star_topology_sentinels(profile, local_path, remote_path, live_state)
         if live_state.get('--max-delete', 100) > 10:
             live_state['_AUDIT_ERROR_TOPOLOGY'] = "Hub-and-Spoke requires --max-delete to be 10% or lower to prevent cascading mass deletions across devices."
             
+    return live_state
+
+def get_hardware_bounds():
+    """Calculates hardware thresholds with a 5% safety buffer for Overdrive mode."""
+    import os
+    cores = os.cpu_count() or 2
+    mem_gb = 4.0 # Safe default fallback
+    
+    if os.path.exists('/proc/meminfo'):
+        try:
+            with open('/proc/meminfo', 'r') as f:
+                for line in f:
+                    if 'MemAvailable' in line:
+                        mem_gb = int(line.split()[1]) / 1024 / 1024
+                        break
+        except: pass
+
+    # Overdrive 5% Safety Buffer math
+    max_c = max(1, int((cores * 16) * 0.95))
+    max_t = max(1, int((cores * 8) * 0.95))
+    safe_fast_list = mem_gb >= (1.5 / 0.95)
+
+    return {"--checkers": max_c, "--transfers": max_t, "fast_list_safe": safe_fast_list, "mem_gb": mem_gb}
+
+def enforce_resource_limits(live_state):
+    """Scans host core configurations and enforces them if Overdrive is enabled."""
+    for key in ['_AUDIT_ERROR_RAM', '_AUDIT_ERROR_CPU', '_AUDIT_ERROR_IO']:
+        live_state.pop(key, None)
+
+    bounds = get_hardware_bounds()
+
+    # Always protect against hard OOM crashes
+    if live_state.get('--fast-list') and not bounds["fast_list_safe"]:
+        live_state['--fast-list'] = False 
+        live_state['_AUDIT_ERROR_RAM'] = f"Dynamic Override: Disabled --fast-list. Low System RAM ({bounds['mem_gb']:.2f} GB) risks an Out-Of-Memory freeze."
+
+    # Autonomy Override: If Overdrive is OFF, we do not clamp the CPU/IO values dynamically
+    if not live_state.get('preset_overdrive_sync', False):
+        return live_state
+
+    # 2. Parallel Processing Thresholds (Dynamic CPU Clamping)
+    try:
+        checkers = int(live_state.get('--checkers', 8))
+        if checkers > bounds["--checkers"]:
+            live_state['--checkers'] = bounds["--checkers"]
+            live_state['_AUDIT_ERROR_CPU'] = f"Overdrive Active: Capped parallel checkers at {bounds['--checkers']} (Hardware Max minus 5% buffer)."
+    except (ValueError, TypeError): pass
+
+    # 3. IO / Transfers (Dynamic IO Clamping)
+    try:
+        transfers = int(live_state.get('--transfers', 4))
+        if transfers > bounds["--transfers"]:
+            live_state['--transfers'] = bounds["--transfers"]
+            live_state['_AUDIT_ERROR_IO'] = f"Overdrive Active: Capped transfers at {bounds['--transfers']} (Hardware Max minus 5% buffer)."
+    except (ValueError, TypeError): pass
+
     return live_state
