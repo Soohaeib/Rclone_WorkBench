@@ -1,4 +1,4 @@
-import gi, os, subprocess
+import gi, os, subprocess, datetime
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 from urllib.parse import unquote
@@ -24,10 +24,7 @@ class LiveOutputPanel:
             header.pack_end(_btn("folder-open-symbolic", "Open Log Dir", lambda _, x=p: os.makedirs(LOG_DIR, exist_ok=True) or subprocess.Popen(['xdg-open', LOG_DIR])), False, False, 0)
             
             tv = Gtk.TextView(editable=False, cursor_visible=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
-            
-            # Swapped to ymuse-delete-symbolic, and the trash button is gone!
             header.pack_end(_btn("ymuse-delete-symbolic", "Delete Log", lambda _, x=p: (os.remove(log) if os.path.exists(log := os.path.join(LOG_DIR, f"{x}_sync.jsonl")) else None) or self.tabs[x]['buffer'].set_text("[SYSTEM] Log deleted.\n")), False, False, 0)
-            
             header.pack_end(_btn("view-refresh-symbolic", "Reload Log", lambda _, x=p: self.reload_log(x)), False, False, 0)
             header.pack_end(_btn("edit-clear-symbolic", "Clear Display", lambda _, x=p: self.tabs[x]["buffer"].set_text("")), False, False, 0)
             
@@ -80,10 +77,12 @@ class LiveOutputPanel:
         if scroll: tab['tv'].scroll_to_mark(buf.create_mark(None, buf.get_end_iter(), False), 0.05, True, 0, 1)
         return False
 
+
 class InventoryWorkbench:
-    def __init__(self, profiles):
+    def __init__(self, app):
         rules_engine.validate_blueprint()
-        self.remotes, self.global_cfg = profiles, config_manager.load_config()
+        self.app = app
+        self.remotes, self.global_cfg = list(app.threads.keys()), config_manager.load_config()
         self.items_lookup, self.smart_keys = rules_engine.get_item_lookup(), rules_engine.get_smart_keys()
         
         self.is_dirty, self._updating_rules, self._is_syncing_profile, self.smart_toggles = False, False, False, {}
@@ -97,20 +96,53 @@ class InventoryWorkbench:
         self.search_entry, self.category_combo = self.builder.get_object("search_entry"), self.builder.get_object("category_combo")
         self.status_label = self.builder.get_object("status_label")
         
-        # --- Clean Global Path Drag and Drop ---
+        # ==============================================================================
+        # --- GLOBAL COMMAND CENTER (Connected directly to Glade IDs) ---
+        self.btn_sync = self.builder.get_object("btn_sync")
+        self.btn_stop = self.builder.get_object("btn_stop")
+        self.btn_trash = self.builder.get_object("btn_trash")
+        self.btn_info = self.builder.get_object("btn_info")
+        
+        self.btn_sync.connect("clicked", lambda _: self.app.threads[self.profile_combo.get_active_text()].trigger_sync() if self.profile_combo.get_active_text() else None)
+        self.btn_stop.connect("clicked", self.stop_current_sync)
+        self.btn_trash.connect("clicked", self.open_local_trash)
+
+        # Build Real-Time Info Popover (Global Operating Environment Only)
+        self.info_popover = Gtk.Popover.new(self.btn_info)
+        self.info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.info_box.set_margin_start(16); self.info_box.set_margin_end(16)
+        self.info_box.set_margin_top(16); self.info_box.set_margin_bottom(16)
+        
+        def _add_info_row(icon_name, default_text):
+            hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            img = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU)
+            lbl = Gtk.Label(label=default_text, xalign=0)
+            hbox.pack_start(img, False, False, 0)
+            hbox.pack_start(lbl, True, True, 0)
+            self.info_box.pack_start(hbox, False, False, 0)
+            return lbl
+
+        self.lbl_ram = _add_info_row("drive-harddisk-symbolic", "Available RAM: ...")
+        self.lbl_cpu = _add_info_row("applications-system-symbolic", "Logical Cores: ...")
+        self.lbl_load = _add_info_row("utilities-system-monitor-symbolic", "System Load: ...")
+        
+        self.info_box.show_all()
+        self.info_popover.add(self.info_box)
+        self.btn_info.set_popover(self.info_popover)
+        # ==============================================================================
+
         self.path_entry.drag_dest_set(Gtk.DestDefaults.ALL,[], Gdk.DragAction.COPY)
         self.path_entry.drag_dest_add_uri_targets()
         def _on_path_drop(wid, ctx, x, y, data, info, time):
             if uris := data.get_uris():
                 path = unquote(uris[0].replace("file://", "").strip('\r\n'))
-                if os.path.isfile(path): path = os.path.dirname(path) # Clean files to dirs
+                if os.path.isfile(path): path = os.path.dirname(path) 
                 wid.set_text(path)
                 ctx.finish(True, False, time)
                 wid.stop_emission_by_name("drag-data-received")
                 return True
             return False
         self.path_entry.connect("drag-data-received", _on_path_drop)
-        # ---------------------------------------
 
         self._setup_minimal_css(); self.setup_smart_presets()
         self.window.connect("delete-event", lambda *_: self.window.hide() or True)
@@ -122,33 +154,23 @@ class InventoryWorkbench:
         self.builder.get_object("btn_toggle_smart").connect('clicked', lambda _: self.builder.get_object("smart_revealer").set_reveal_child(not self.builder.get_object("smart_revealer").get_reveal_child()))
         self.builder.get_object("btn_toggle_preview").connect('clicked', lambda _: self.builder.get_object("preview_revealer").set_reveal_child(not self.builder.get_object("preview_revealer").get_reveal_child()))
         
-        # --- RESET DROPDOWN MENU ---
         def on_reset_clicked(btn):
             menu = Gtk.Menu()
-            
             i_default = Gtk.MenuItem(label="⟳ Reset to Stable Defaults")
             i_default.connect("activate", lambda _: self.reset_to_factory_defaults(None))
             menu.append(i_default)
-            
             i_last = Gtk.MenuItem(label="↩ Revert to Last Saved State")
             i_last.connect("activate", lambda _: setattr(self, 'global_cfg', config_manager.load_config()) or self.load_data())
             menu.append(i_last)
-            
             menu.show_all()
             menu.popup_at_widget(btn, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None)
 
         self.builder.get_object("btn_reset").connect("clicked", on_reset_clicked)
-        
-        # Keep btn_undo safely wired if it still exists in your XML layout to prevent errors
         if undo_btn := self.builder.get_object("btn_undo"):
             undo_btn.connect("clicked", lambda _: setattr(self, 'global_cfg', config_manager.load_config()) or self.load_data())
-        # ---------------------------
         
         self.apply_btn.connect("clicked", self.save_config)
-        
-        # --- START REAL-TIME OVERDRIVE POLLER ---
         GLib.timeout_add(2000, self.realtime_overdrive_poll)
-        # ----------------------------------------
         
         def _browse(_):
             d = Gtk.FileChooserDialog(title="Select Local Directory", parent=self.window, action=Gtk.FileChooserAction.SELECT_FOLDER)
@@ -159,15 +181,38 @@ class InventoryWorkbench:
 
         self.output_panel = LiveOutputPanel(self.remotes)
         self.output_panel.change_callback = self.sync_ui_to_log_tab
-        
         self.builder.get_object("live_output_hook").pack_start(self.output_panel.container, True, True, 0)
         self.category_combo.append_text("All Categories")
         [self.category_combo.append_text(c) for c in CONFIG_SCHEMA.keys()]; self.category_combo.set_active(0)
         [self.profile_combo.append_text(r) for r in self.remotes]; self.profile_combo.set_active(0)
 
+    # --- PROCESS KILL & TRASH FUNCTIONS ---
+    def stop_current_sync(self, btn):
+        if (p := self.profile_combo.get_active_text()) and p in self.app.threads:
+            t = self.app.threads[p]
+            from src import rclone_runner
+            # First click = Graceful SIGINT. Second click = Forceful SIGKILL.
+            rclone_runner.kill_process(t.proc, force=(t.kill_clicks > 0))
+            t.kill_clicks += 1
+            
+            # Update the UI button to warn the user that the next click is forceful
+            if t.run_state:
+                self.btn_stop.set_label("Force Stop" if t.kill_clicks == 1 else "Terminating...")
+
+    def open_local_trash(self, btn):
+        if hasattr(self, 'current_trash_path') and os.path.exists(self.current_trash_path):
+            subprocess.Popen(['xdg-open', self.current_trash_path])
+
     def focus_profile(self, profile): self.main_stack.set_visible_child_name("page1"); self.output_panel.focus_profile(profile)
     def focus_workbench(self): self.main_stack.set_visible_child_name("page0")
-    def set_status(self, profile, is_running): self.output_panel.set_status(profile, is_running)
+    
+    def set_status(self, profile, is_running): 
+        self.output_panel.set_status(profile, is_running)
+        if self.profile_combo.get_active_text() == profile:
+            self.btn_sync.set_sensitive(not is_running)
+            self.btn_stop.set_sensitive(is_running)
+            # Reset the button text back to normal when a sync stops/starts
+            self.btn_stop.set_label("Stop")
     
     def show_all(self): self.window.show_all()
     def present(self): self.window.present()
@@ -193,6 +238,10 @@ class InventoryWorkbench:
             self._is_syncing_profile = True
             self.load_data()
             self.output_panel.focus_profile(profile)
+            
+            is_running = self.app.threads[profile].run_state
+            self.btn_sync.set_sensitive(not is_running)
+            self.btn_stop.set_sensitive(is_running)
             self._is_syncing_profile = False
 
     def sync_ui_to_log_tab(self, profile_name):
@@ -232,14 +281,12 @@ class InventoryWorkbench:
         fk, fv, lk, dk = rules_engine.evaluate_state(self._gather_live_keys(), self._gather_raw_values(), self.items_lookup)
         self._apply_new_state(fk, fv, lk, dk)
         
-        # --- OVERDRIVE AUTO-MAXIMIZE ---
         if item_id == "preset_overdrive_sync" and switch.get_active():
             bounds = smart_engine.get_hardware_bounds()
             for row in self.can_list.get_children():
                 if row.key == '--checkers': widget_factory.inject_value(row, self.items_lookup['--checkers'], bounds["--checkers"])
                 elif row.key == '--transfers': widget_factory.inject_value(row, self.items_lookup['--transfers'], bounds["--transfers"])
-        # -------------------------------
-        
+                
         self.check_dirty()
 
     def _apply_new_state(self, target_keys, values_dict, locked_keys, disabled_keys):
@@ -304,13 +351,14 @@ class InventoryWorkbench:
             (str(c_cfg.get(k)).strip() if c_cfg.get(k) not in[None, False] else "") for k in set(s_cfg) | set(c_cfg))
             
         self.status_label.set_markup("<span foreground='#e67e22'><b>[✗] Unsaved Changes</b></span>" if self.is_dirty else "<span foreground='#2ecc71'><b>[✓] Synced to Disk</b></span>")
+        
+        self.btn_sync.set_sensitive(not self.is_dirty and not self.app.threads[p].run_state)
         self.update_preview()
         
     def update_preview(self):
         p, lp = self.profile_combo.get_active_text() or "[PROFILE]", self.path_entry.get_text() or "[LOCAL_PATH]"
         raw_vals = self._gather_raw_values()
         
-        # --- DYNAMIC HARDWARE BOUNDS ---
         is_overdrive = raw_vals.get('preset_overdrive_sync', False)
         hw_bounds = smart_engine.get_hardware_bounds()
         
@@ -319,8 +367,7 @@ class InventoryWorkbench:
                 widget_factory.update_spin_bounds(row, hw_bounds["--checkers"] if is_overdrive else 1000000)
             elif row.key == '--transfers':
                 widget_factory.update_spin_bounds(row, hw_bounds["--transfers"] if is_overdrive else 1000000)
-        # -------------------------------
-        
+                
         active_keys =[k for k, v in raw_vals.items() if v is True or (isinstance(v, str) and v) or (type(v) in[int, float])]
         _, fv, _, _ = rules_engine.evaluate_state(active_keys, raw_vals, self.items_lookup)
         
@@ -359,6 +406,11 @@ class InventoryWorkbench:
         
         self._updating_rules, self.is_dirty = False, False
         self.status_label.set_markup("<span foreground='#2ecc71'><b>[✓] Synced to Disk</b></span>")
+        
+        is_running = self.app.threads[p].run_state
+        self.btn_sync.set_sensitive(not is_running)
+        self.btn_stop.set_sensitive(is_running)
+        
         self.update_preview()
         
     def save_config(self, btn):
@@ -377,40 +429,57 @@ class InventoryWorkbench:
     def reset_to_factory_defaults(self, btn):
         if not (p := self.profile_combo.get_active_text()): 
             return
-            
-        # Re-derive factory blueprint default selections for this profile
         factory_defaults = {
             getattr(item, 'flag', ''): getattr(item, 'default', "") if item.type != 'check' else False 
             for cat in CONFIG_SCHEMA.values() for item in cat if getattr(item, 'flag', None)
         }
-        
-        # Overwrite current state in memory and force-refresh the canvas views
         self.global_cfg.setdefault('remote_configs', {})[p] = factory_defaults
         self.load_data()
 
+    # --- REAL-TIME SYSTEM POLLER & UI UPDATER ---
     def realtime_overdrive_poll(self):
-        """Polls hardware every 2 seconds. Visually scales UI limits if RAM/CPU drops."""
-        # Only poll if Overdrive is active
-        if not self.smart_toggles.get("preset_overdrive_sync", Gtk.Switch()).get_active():
-            return True 
-
         bounds = smart_engine.get_hardware_bounds()
-        changed = False
-
-        for row in self.can_list.get_children():
-            if row.key in ['--checkers', '--transfers'] and hasattr(row, 'input_widget'):
-                adj = row.input_widget.get_adjustment()
-                new_max = bounds[row.key]
-                
-                # If hardware capacity dropped, shrink the UI limits dynamically
-                if adj.get_upper() != new_max:
-                    widget_factory.update_spin_bounds(row, new_max)
-                    # Force the user's value down if it is suddenly above the new limit
-                    if adj.get_value() > new_max:
-                        adj.set_value(new_max)
-                    changed = True
-
-        if changed:
-            self.check_dirty()
+        p = self.profile_combo.get_active_text()
+        
+        # --- Update Native Popover Hardware UI (Global OS Info) ---
+        import os
+        cores = os.cpu_count() or 2
+        try: load = os.getloadavg()[0] # 1-minute system load average
+        except: load = 0.0
+        
+        self.lbl_ram.set_label(f"Available RAM: {bounds['mem_gb']:.2f} GB")
+        self.lbl_cpu.set_label(f"Logical Cores: {cores}")
+        self.lbl_load.set_label(f"System Load (1m): {load:.2f}")
+        # ----------------------------------------------------------
+        
+        if p and p in self.app.threads:
+            # Dynamic Trash Button State Evaluator
+            cfg = config_manager.load_config()
+            p_cfg = cfg.get('remote_configs', {}).get(p, {})
+            l_path = self.path_entry.get_text() 
+            t_name = p_cfg.get('--backup-dir1', TRASH_LOCAL_NAME)
+            self.current_trash_path = t_name if os.path.isabs(t_name) else os.path.join(l_path, t_name)
             
-        return True # Keep the GTK timer loop alive
+            trash_exists = os.path.exists(self.current_trash_path)
+            self.btn_trash.set_sensitive(trash_exists)
+            self.btn_trash.set_tooltip_text("Open Local Trash" if trash_exists else "Local Trash (Unavailable)")
+
+        # Dynamic Overdrive Widget Enforcement
+        if self.smart_toggles.get("preset_overdrive_sync", Gtk.Switch()).get_active():
+            # ... rest of the method remains exactly the same ...
+            changed = False
+            for row in self.can_list.get_children():
+                if row.key in ['--checkers', '--transfers'] and hasattr(row, 'input_widget'):
+                    adj = row.input_widget.get_adjustment()
+                    new_max = bounds[row.key]
+                    
+                    if adj.get_upper() != new_max:
+                        widget_factory.update_spin_bounds(row, new_max)
+                        if adj.get_value() > new_max:
+                            adj.set_value(new_max)
+                        changed = True
+
+            if changed:
+                self.check_dirty()
+                
+        return True

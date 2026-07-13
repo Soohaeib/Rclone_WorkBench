@@ -1,7 +1,7 @@
 import subprocess, os, signal, json, datetime
 from src.workbench_blueprint import LOG_DIR
 
-def run_sync_session(profile: str, args: list):
+def run_sync_session(profile: str, args: list, proc_callback=None):
     """Executes rclone, forces JSON/INFO logging, and appends to log file in real-time."""
     os.makedirs(LOG_DIR, exist_ok=True)
     log_path = os.path.join(LOG_DIR, f"{profile}_sync.jsonl")
@@ -23,8 +23,11 @@ def run_sync_session(profile: str, args: list):
         preexec_fn=os.setsid
     )
 
+    # NEW: Instantly pass the running process back to the app so we can kill it if needed!
+    if proc_callback:
+        proc_callback(process)
+
     # --- NON-BLOCKING LOG CAPTURE ---
-    # This thread handles the blocking readline() calls, so our main function doesn't get stuck.
     def _log_capture_thread(proc, log_file_path):
         with open(log_file_path, "a", encoding="utf-8") as lf:
             while True:
@@ -39,15 +42,12 @@ def run_sync_session(profile: str, args: list):
     log_thread = threading.Thread(target=_log_capture_thread, args=(process, log_path), daemon=True)
     log_thread.start()
     
-    # The main function now waits directly for the process to terminate.
-    # When kill_process() is called, this wait will end immediately.
     process.wait()
-    # --------------------------------
 
     return {
         "success": process.returncode == 0,
         "process": process,
-        "output": "" # Output is now directly in the file, not buffered in memory.
+        "output": "" 
     }
 
 def kill_process(process, force=False):

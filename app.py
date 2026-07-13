@@ -64,7 +64,9 @@ class SyncThread(threading.Thread):
             remote_full = f"{self.profile}:{remote_path}" if remote_path else f"{self.profile}:"
             args =["bisync", local_path, remote_full] + flags
             
-            res = rclone_runner.run_sync_session(self.profile, args)
+            # Pass a callback to instantly grab the process ID as soon as it starts
+            def _set_proc(p): self.proc = p
+            res = rclone_runner.run_sync_session(self.profile, args, _set_proc)
 
             self.run_state = False
             self.err = not res.get("success", False)
@@ -120,17 +122,23 @@ class RCloneWorkbenchApp:
         self.ind = AppIndicator3.Indicator.new("rclone_tray", "network-server", AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
         self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
 
+        # --- DYNAMIC GARBAGE COLLECTION ---
+        # Clean up JSON entries that no longer exist in rclone.conf
+        valid_remotes = self.rc.sections()
+        if hasattr(config_manager, 'prune_orphaned_remotes'):
+            config_manager.prune_orphaned_remotes(valid_remotes)
+        # ----------------------------------
+
         cfg = config_manager.load_config()
-        for r in self.rc.sections():
+        for r in valid_remotes:
             thread = SyncThread(r, cfg.get('local_paths', {}).get(r, f"/mnt/DataDrive/{r}"), self)
             config_manager.ensure_profile_exists(r); self.threads[r] = thread; thread.start()
         self.update_menu()
 
     def update_menu(self):
         m = Gtk.Menu()
-        import subprocess # Safely import for the xdg-open calls
+        import subprocess 
         
-        # Helper to calculate relative time dynamically
         def format_relative(iso_str):
             if not iso_str or iso_str == "Never": return "Never"
             try:
@@ -146,7 +154,6 @@ class RCloneWorkbenchApp:
             except: 
                 return "Unknown"
 
-        # Helper to create a menu item with a native GTK symbolic icon
         def create_icon_item(icon_name, text):
             item = Gtk.MenuItem()
             box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -158,7 +165,6 @@ class RCloneWorkbenchApp:
             item.add(box)
             return item
 
-        # Load live config to resolve dynamic Trash paths per profile
         cfg = config_manager.load_config()
 
         for p, t in self.threads.items():
@@ -179,7 +185,6 @@ class RCloneWorkbenchApp:
                 mi = Gtk.MenuItem(label=lbl); mi.connect('activate', cb); mi.set_sensitive(sens); sub.append(mi)
             sub.append(Gtk.SeparatorMenuItem())
             
-            # --- DYNAMIC TRASH RESOLVER ---
             p_cfg = cfg.get('remote_configs', {}).get(p, {})
             l_path = cfg.get('local_paths', {}).get(p, "")
             t_name = p_cfg.get('--backup-dir1', workbench_blueprint.TRASH_LOCAL_NAME)
@@ -190,9 +195,8 @@ class RCloneWorkbenchApp:
                 i_trash.connect("activate", lambda _, path=trash_path: subprocess.Popen(['xdg-open', path]))
                 i_trash.set_sensitive(True)
             else:
-                i_trash.set_sensitive(False) # Gray it out if no trash exists!
+                i_trash.set_sensitive(False) 
             sub.append(i_trash)
-            # ------------------------------
             
             if t.err:
                 s_icon, s_text = "dialog-error-symbolic", "ERROR"
@@ -217,7 +221,8 @@ class RCloneWorkbenchApp:
         m.show_all(); self.ind.set_menu(m)
 
     def open_workbench(self):
-        if not self.workbench: self.workbench = workbench_ui.InventoryWorkbench(list(self.threads.keys()))
+        # CHANGED: Now passing 'self' instead of a list of remotes
+        if not self.workbench: self.workbench = workbench_ui.InventoryWorkbench(self)
         if hasattr(self.workbench, 'focus_workbench'): self.workbench.focus_workbench()
         self.workbench.show_all(); self.workbench.present(); return self.workbench
 

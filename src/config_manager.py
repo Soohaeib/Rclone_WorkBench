@@ -17,6 +17,22 @@ def ensure_profile_exists(profile):
         save_config(cfg)
     return cfg
 
+def prune_orphaned_remotes(active_remotes):
+    """Garbage collects old profiles from bisync_settings.json if deleted from rclone.conf."""
+    cfg = load_config()
+    changed = False
+    
+    for section in ['local_paths', 'remote_configs', 'filter_hashes']:
+        if section in cfg:
+            # Find keys in the JSON that do NOT exist in rclone.conf
+            stale_keys = [k for k in cfg[section].keys() if k not in active_remotes]
+            for k in stale_keys:
+                del cfg[section][k]
+                changed = True
+                
+    if changed:
+        save_config(cfg)
+
 def build_base_args(profile, global_cfg, inferred_locks):
     cfg = global_cfg.get('remote_configs', {}).get(profile, {})
     args, state = [], {**cfg, **inferred_locks}

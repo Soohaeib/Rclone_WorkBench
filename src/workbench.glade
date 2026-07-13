@@ -13,11 +13,26 @@
         <property name="can-focus">False</property>
         <property name="orientation">vertical</property>
         <child>
-          <object class="GtkBox">
+        <!-- REPLACE YOUR TOP BOX WITH THIS GTK3 COMPLIANT BOX -->
+          <object class="GtkBox" id="header_center_box">
             <property name="visible">True</property>
             <property name="can-focus">False</property>
+            <!-- Homogeneous=True ensures 3 exactly equal columns for perfect centering -->
+            <property name="homogeneous">True</property>
             <property name="margin-top">10</property>
             <property name="margin-bottom">6</property>
+            <property name="margin-start">16</property>
+            <property name="margin-end">16</property>
+            
+            <!-- Column 1 (Left): Empty space -->
+            <child>
+              <object class="GtkBox">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+              </object>
+            </child>
+
+            <!-- Column 2 (Center): The Stack Switcher -->
             <child>
               <object class="GtkStackSwitcher" id="main_switcher">
                 <property name="visible">True</property>
@@ -25,12 +40,78 @@
                 <property name="halign">center</property>
                 <property name="stack">main_stack</property>
               </object>
-              <packing>
-                <property name="expand">True</property>
-                <property name="fill">True</property>
-              </packing>
+            </child>
+
+            <!-- Column 3 (Right): Command Bar (valign="center" forces equal height) -->
+            <child>
+              <object class="GtkBox" id="cmd_bar">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="spacing">6</property>
+                <property name="halign">end</property>
+                <property name="valign">center</property> 
+                <child>
+                  <object class="GtkButton" id="btn_sync">
+                    <property name="label">Sync</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="always-show-image">True</property>
+                    <style><class name="suggested-action"/></style>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="visible">True</property>
+                        <property name="icon-name">media-playback-start-symbolic</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_stop">
+                    <property name="label">Stop</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="sensitive">False</property>
+                    <property name="always-show-image">True</property>
+                    <style><class name="destructive-action"/></style>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="visible">True</property>
+                        <property name="icon-name">process-stop-symbolic</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_trash">
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="sensitive">False</property>
+                    <property name="tooltip-text">Local Trash (Unavailable)</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="visible">True</property>
+                        <property name="icon-name">user-trash-symbolic</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkMenuButton" id="btn_info">
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="tooltip-text">Operating Environment Info</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="visible">True</property>
+                        <property name="icon-name">dialog-information-symbolic</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
             </child>
           </object>
+          <!-- END OF REPLACEMENT -->
         </child>
         <child>
           <object class="GtkStack" id="main_stack">
@@ -332,7 +413,6 @@
                     <property name="can-focus">False</property>
                     <property name="spacing">12</property>
                     <property name="margin-top">8</property>
-                    <!-- UNDO BUTTON: Reverts unsaved changes back to saved disk state -->
                     <child>
                       <object class="GtkButton" id="btn_undo">
                         <property name="visible">True</property>
@@ -346,13 +426,11 @@
                         </child>
                       </object>
                     </child>
-                    
-                    <!-- RESET BUTTON: Wipes all modifications back to factory blueprints -->
                     <child>
                       <object class="GtkButton" id="btn_reset">
                         <property name="visible">True</property>
                         <property name="can-focus">True</property>
-                        <property name="tooltip-text" translatable="yes">Reset Factory Defaults</property>
+                        <property name="tooltip-text" translatable="yes">Reset Options</property>
                         <child>
                           <object class="GtkImage">
                             <property name="visible">True</property>
