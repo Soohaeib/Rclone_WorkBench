@@ -1,4 +1,4 @@
-import subprocess, os, signal, json, datetime
+import subprocess, os, signal, json, datetime, threading
 from src.workbench_blueprint import LOG_DIR
 
 def run_sync_session(profile: str, args: list, proc_callback=None):
@@ -38,7 +38,6 @@ def run_sync_session(profile: str, args: list, proc_callback=None):
                     lf.write(line)
                     lf.flush()
     
-    import threading
     log_thread = threading.Thread(target=_log_capture_thread, args=(process, log_path), daemon=True)
     log_thread.start()
     

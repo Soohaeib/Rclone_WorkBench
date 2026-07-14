@@ -2,7 +2,7 @@
 import os
 os.environ["NO_AT_BRIDGE"] = "1" # Suppress GTK/Nemo DBus accessibility spam
 
-import gi, signal, threading, time, datetime, configparser
+import gi, signal, threading, time, datetime, configparser, subprocess
 gi.require_version('Gtk', '3.0'); gi.require_version('AppIndicator3', '0.1'); gi.require_version('Notify', '0.7')
 from gi.repository import Gtk, GLib, AppIndicator3, Notify
 from src import workbench_blueprint, config_manager, workbench_ui, rclone_runner, log_formatter, rules_engine, smart_engine
@@ -137,7 +137,6 @@ class RCloneWorkbenchApp:
 
     def update_menu(self):
         m = Gtk.Menu()
-        import subprocess 
         
         def format_relative(iso_str):
             if not iso_str or iso_str == "Never": return "Never"

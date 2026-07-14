@@ -1,4 +1,4 @@
-import gi, os, subprocess, datetime
+import gi, os, subprocess, datetime, tempfile, shutil, signal
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 from urllib.parse import unquote
@@ -222,10 +222,6 @@ class InventoryWorkbench:
     def toggle_rclone_gui(self, btn):
         if not self.gui_process:
             try:
-                import tempfile
-                import shutil
-                import os
-                
                 # Create a secure temporary runtime directory for path interception
                 self.sudo_interceptor_dir = tempfile.mkdtemp()
                 sudo_hook_path = os.path.join(self.sudo_interceptor_dir, "sudo")
@@ -247,9 +243,12 @@ class InventoryWorkbench:
                     env=portal_env
                 )
                 
-                # Toggle visual state using clean textless tooltips and symbolic state shifts
+                # Toggle visual state with a custom CSS provider to enforce red background while keeping circular shape
                 self.btn_rclone_gui.set_tooltip_text("Close Rclone Web Configuration Portal")
-                self.btn_rclone_gui.get_style_context().add_class("destructive-action")
+                if not hasattr(self, 'red_btn_css'):
+                    self.red_btn_css = Gtk.CssProvider()
+                    self.red_btn_css.load_from_data(b"button { background-image: none; background-color: #c0392b; border-color: #a93226; color: white; } button:hover { background-color: #e74c3c; border-color: #c0392b; }")
+                self.btn_rclone_gui.get_style_context().add_provider(self.red_btn_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
                 
                 self.btn_sync.set_sensitive(False)
                 self.btn_stop.set_sensitive(False)
@@ -264,9 +263,6 @@ class InventoryWorkbench:
             except Exception as e:
                 self.status_label.set_markup(f"<span foreground='#e74c3c'><b>Failed to start Web GUI: {e}</b></span>")
         else:
-            import signal
-            import shutil
-            import os
             try:
                 os.killpg(os.getpgid(self.gui_process.pid), signal.SIGTERM)
             except: pass
@@ -279,7 +275,13 @@ class InventoryWorkbench:
             
             # Return portal button back to its initial textless entry state
             self.btn_rclone_gui.set_tooltip_text("Launch official Rclone Web Configurator")
-            self.btn_rclone_gui.get_style_context().remove_class("destructive-action")
+            if hasattr(self, 'red_btn_css'):
+                self.btn_rclone_gui.get_style_context().remove_provider(self.red_btn_css)
+            
+            # Restore global tools that were locked during the portal session
+            self.btn_sync.set_sensitive(True)
+            self.btn_trash.set_sensitive(True)
+            self.btn_info.set_sensitive(True)
             
             self.profile_combo.set_sensitive(True)
             self.path_entry.set_sensitive(True)
@@ -305,6 +307,7 @@ class InventoryWorkbench:
         if self.profile_combo.get_active_text() == profile:
             self.btn_sync.set_sensitive(not is_running)
             self.btn_stop.set_sensitive(is_running)
+            self.btn_rclone_gui.set_sensitive(not is_running)
             # Reset the button tooltip back to normal when a sync stops/starts
             self.btn_stop.set_tooltip_text("Stop Active Sync Session")
     

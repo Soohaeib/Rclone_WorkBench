@@ -122,7 +122,6 @@ def verify_star_topology_sentinels(profile, local_path, remote_path, live_state)
 
 def get_hardware_bounds():
     """Calculates hardware thresholds with a 5% safety buffer for Overdrive mode."""
-    import os
     cores = os.cpu_count() or 2
     mem_gb = 4.0 # Safe default fallback
     
