@@ -1,12 +1,22 @@
 import os, json
 from src.workbench_blueprint import APP_DIR, JSON_CONFIG_FILE, CONFIG_SCHEMA
 
-def load_config():
-    try:
-        with open(JSON_CONFIG_FILE, 'r') as f: return json.load(f)
-    except: return {"local_paths": {}, "remote_configs": {}}
+_config_cache = None
+
+def load_config(force_reload=False):
+    global _config_cache
+    if _config_cache is None or force_reload:
+        try:
+            with open(JSON_CONFIG_FILE, 'r') as f: 
+                _config_cache = json.load(f)
+        except: 
+            _config_cache = {"local_paths": {}, "remote_configs": {}}
+    return _config_cache
 
 def save_config(cfg):
+    global _config_cache
+    _config_cache = cfg
+
     os.makedirs(APP_DIR, exist_ok=True)
     with open(JSON_CONFIG_FILE, 'w') as f: json.dump(cfg, f, indent=4)
 

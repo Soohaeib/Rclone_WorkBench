@@ -182,7 +182,7 @@ class InventoryWorkbench:
 
         self.builder.get_object("btn_reset").connect("clicked", on_reset_clicked)
         if undo_btn := self.builder.get_object("btn_undo"):
-            undo_btn.connect("clicked", lambda _: setattr(self, 'global_cfg', config_manager.load_config()) or self.load_data())
+            undo_btn.connect("clicked", lambda _: setattr(self, 'global_cfg', config_manager.load_config(force_reload=True)) or self.load_data())
         
         self.apply_btn.connect("clicked", self.save_config)
         GLib.timeout_add(2000, self.realtime_overdrive_poll)
@@ -295,7 +295,7 @@ class InventoryWorkbench:
             for r in valid_remotes:
                 config_manager.ensure_profile_exists(r)
                 
-            self.global_cfg = config_manager.load_config()
+            self.global_cfg = config_manager.load_config(force_reload=True)
             self.load_data()
 
 

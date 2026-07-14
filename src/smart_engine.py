@@ -55,7 +55,9 @@ def audit_resync_environment(profile, local_path, remote_path, live_state):
     # --- DIRECTED RESYNC SAFETY CHECKS (HARDENED) ---
     if is_resync_equipped and local_path and os.path.exists(local_path):
         try:
-            if not os.listdir(local_path):
+            with os.scandir(local_path) as it:
+                is_empty = next(it, None) is None
+            if is_empty:
                 live_state['_AUDIT_ERROR_EMPTY'] = f"DANGER: Local path '{anchor}' is empty. A Resync under these conditions would DELETE ALL cloud files. Aborting."
         except Exception as e:
             live_state['_AUDIT_ERROR_PATH'] = f"Cannot read local path '{anchor}': {e}"

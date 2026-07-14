@@ -14,19 +14,20 @@ class SyncThread(threading.Thread):
     def __init__(self, profile, path, app):
         super().__init__(daemon=True)
         self.profile, self.path, self.app = profile, path, app
-        self.req, self.run_state, self.err, self.last, self.proc = False, False, False, "Never", None
+        self.trigger = threading.Event()
+        self.run_state, self.err, self.last, self.proc = False, False, "Never", None
         self.last = log_formatter.get_last_run_time(profile)
         self.kill_clicks = 0
 
-    def trigger_sync(self): self.req = True
+    def trigger_sync(self): self.trigger.set()
 
     def run(self):
         while True:
-            if not self.req: 
-                time.sleep(1)
-                continue
-                
-            self.req, self.run_state, self.err = False, True, False
+            # Efficiently blocks until set() is called. Safe to hang on exit because thread is daemon=True.
+            self.trigger.wait() 
+            self.trigger.clear()
+            
+            self.run_state, self.err = True, False
             self.kill_clicks = 0
             
             GLib.idle_add(self.app.update_menu)

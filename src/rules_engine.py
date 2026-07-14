@@ -1,7 +1,12 @@
 from src.workbench_blueprint import CONFIG_SCHEMA, SMART_SCHEMA
 
+_item_lookup_cache = None
+
 def get_item_lookup():
-    return {getattr(i, 'flag', getattr(i, 'id', '')): i for schema in (SMART_SCHEMA, CONFIG_SCHEMA) for cat in schema.values() for i in cat}
+    global _item_lookup_cache
+    if _item_lookup_cache is None:
+        _item_lookup_cache = {getattr(i, 'flag', getattr(i, 'id', '')): i for schema in (SMART_SCHEMA, CONFIG_SCHEMA) for cat in schema.values() for i in cat}
+    return _item_lookup_cache
 
 def get_smart_keys():
     return {i.id for cat in SMART_SCHEMA.values() for i in cat}
