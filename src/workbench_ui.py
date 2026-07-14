@@ -16,21 +16,43 @@ class LiveOutputPanel:
         
         for p in remotes:
             vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); vbox.set_border_width(8)
-            header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-            status = Gtk.Label(label="● IDLE", xalign=0); status.get_style_context().add_class("status-line")
-            header.pack_start(status, True, True, 0)
+            header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            header.set_margin_bottom(6)
+            
+            stats_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            prog = Gtk.ProgressBar(); prog.set_show_text(True); prog.set_text("Idle / Finished")
+            
+            metrics_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            detail_lbl = Gtk.Label(xalign=0); detail_lbl.set_markup("<span size='small' color='gray'>Speed: 0 B/s | ETA: -</span>")
+            
+            transfer_btn = Gtk.MenuButton(label="Active Transfers (0)")
+            transfer_popover = Gtk.Popover.new(transfer_btn)
+            transfer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            transfer_box.set_margin_start(8); transfer_box.set_margin_end(8); transfer_box.set_margin_top(8); transfer_box.set_margin_bottom(8)
+            transfer_popover.add(transfer_box)
+            transfer_btn.set_popover(transfer_popover)
+            
+            metrics_box.pack_start(detail_lbl, True, True, 0)
+            metrics_box.pack_end(transfer_btn, False, False, 0)
+            
+            stats_box.pack_start(prog, False, False, 0)
+            stats_box.pack_start(metrics_box, False, False, 0)
+            
+            header.pack_start(stats_box, True, True, 0)
             
             def _btn(icon, tip, cb): b = Gtk.Button(tooltip_text=tip); b.add(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.BUTTON)); b.connect("clicked", cb); return b
             
-            header.pack_end(_btn("folder-open-symbolic", "Open Log Dir", lambda _, x=p: os.makedirs(LOG_DIR, exist_ok=True) or subprocess.Popen(['xdg-open', LOG_DIR])), False, False, 0)
+            btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+            btn_box.set_valign(Gtk.Align.CENTER)
+            btn_box.pack_start(_btn("edit-clear-symbolic", "Clear Display", lambda _, x=p: self.tabs[x]["buffer"].set_text("")), False, False, 0)
+            btn_box.pack_start(_btn("view-refresh-symbolic", "Reload Log", lambda _, x=p: self.reload_log(x)), False, False, 0)
+            btn_box.pack_start(_btn("ymuse-delete-symbolic", "Delete Log", lambda _, x=p: (os.remove(log) if os.path.exists(log := os.path.join(LOG_DIR, f"{x}_sync.jsonl")) else None) or self.tabs[x]['buffer'].set_text("[SYSTEM] Log deleted.\n")), False, False, 0)
+            btn_box.pack_start(_btn("folder-open-symbolic", "Open Log Dir", lambda _, x=p: os.makedirs(LOG_DIR, exist_ok=True) or subprocess.Popen(['xdg-open', LOG_DIR])), False, False, 0)
             
-            tv = Gtk.TextView(editable=False, cursor_visible=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
-            header.pack_end(_btn("ymuse-delete-symbolic", "Delete Log", lambda _, x=p: (os.remove(log) if os.path.exists(log := os.path.join(LOG_DIR, f"{x}_sync.jsonl")) else None) or self.tabs[x]['buffer'].set_text("[SYSTEM] Log deleted.\n")), False, False, 0)
-            header.pack_end(_btn("view-refresh-symbolic", "Reload Log", lambda _, x=p: self.reload_log(x)), False, False, 0)
-            header.pack_end(_btn("edit-clear-symbolic", "Clear Display", lambda _, x=p: self.tabs[x]["buffer"].set_text("")), False, False, 0)
-            
+            header.pack_end(btn_box, False, False, 0)
             vbox.pack_start(header, False, False, 0)
             
+            tv = Gtk.TextView(editable=False, cursor_visible=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
             tv.set_monospace(True); tv.get_style_context().add_class("log-view")
             buf = tv.get_buffer()
             buf.create_tag("DEBUG", foreground="#7f8c8d")
@@ -40,24 +62,31 @@ class LiveOutputPanel:
             buf.create_tag("INFO") 
             tag_link = buf.create_tag("LINK", underline=Pango.Underline.SINGLE)
             
+            for code, color in [("30", "gray"), ("31", "#e74c3c"), ("32", "#2ecc71"), ("33", "#f1c40f"), ("34", "#3498db"), ("35", "#9b59b6"), ("36", "#1abc9c"), ("37", "white"), ("90", "gray")]:
+                buf.create_tag(f"ansi_{code}", foreground=color)
+            
             def _on_click(view, event, b=buf):
-                if event.button != 1: return False
-                try:
-                    x, y = view.window_to_buffer_coords(Gtk.TextWindowType.TEXT, int(event.x), int(event.y))
-                    _, it = view.get_iter_at_position(x, y)
-                    if it.has_tag(tag_link):
-                        start, end = it.copy(), it.copy()
-                        if not start.starts_tag(tag_link): start.backward_to_tag_toggle(tag_link)
-                        if not end.ends_tag(tag_link): end.forward_to_tag_toggle(tag_link)
-                        subprocess.Popen(['xdg-open', b.get_text(start, end, False)])
-                except: pass
+                if event.type == Gdk.EventType.BUTTON_RELEASE and event.button == 1:
+                    try:
+                        x, y = view.window_to_buffer_coords(Gtk.TextWindowType.TEXT, int(event.x), int(event.y))
+                        _, it = view.get_iter_at_position(x, y)
+                        if it.has_tag(tag_link):
+                            start, end = it.copy(), it.copy()
+                            if not start.starts_tag(tag_link): start.backward_to_tag_toggle(tag_link)
+                            if not end.ends_tag(tag_link): end.forward_to_tag_toggle(tag_link)
+                            subprocess.Popen(['xdg-open', b.get_text(start, end, False)])
+                            return True
+                    except: pass
+                return False
                 
             def _on_hover(view, event):
                 try:
-                    x, y = view.window_to_buffer_coords(Gtk.TextWindowType.TEXT, int(event.x), int(event.y))
-                    _, it = view.get_iter_at_position(x, y)
-                    view.get_window(Gtk.TextWindowType.TEXT).set_cursor(Gdk.Cursor.new(Gdk.CursorType.HAND2) if it.has_tag(tag_link) else Gdk.Cursor.new(Gdk.CursorType.XTERM))
+                        x, y = view.window_to_buffer_coords(Gtk.TextWindowType.TEXT, int(event.x), int(event.y))
+                        _, it = view.get_iter_at_position(x, y)
+                        cursor = Gdk.Cursor.new(Gdk.CursorType.HAND2) if it.has_tag(tag_link) else Gdk.Cursor.new(Gdk.CursorType.XTERM)
+                        view.get_window(Gtk.TextWindowType.TEXT).set_cursor(cursor)
                 except: pass
+                return False
                 
             tv.connect("button-release-event", _on_click)
             tv.connect("motion-notify-event", _on_hover)
@@ -69,7 +98,7 @@ class LiveOutputPanel:
             # --- CRITICAL FIX: Create ONE persistent scroll mark to prevent rendering crashes ---
             scroll_mark = buf.create_mark("scroll_end", buf.get_end_iter(), False)
             
-            self.tabs[p] = {'vbox': vbox, 'status': status, 'buffer': buf, 'tv': tv, 'sw': sw, 'scroll_mark': scroll_mark}
+            self.tabs[p] = {'vbox': vbox, 'buffer': buf, 'tv': tv, 'sw': sw, 'scroll_mark': scroll_mark, 'prog': prog, 'detail_lbl': detail_lbl, 'transfer_btn': transfer_btn, 'transfer_box': transfer_box}
             log_formatter.start_live_feed(p, lambda a, x=p: GLib.idle_add(self.update_logs, x, a))
             
         self.notebook.connect("switch-page", lambda n, page, page_num: self.change_callback(n.get_tab_label(page).get_text()) if self.change_callback else None)
@@ -85,7 +114,16 @@ class LiveOutputPanel:
             except: pass
 
     def set_status(self, profile, is_running):
-        if tab := self.tabs.get(profile): GLib.idle_add(tab['status'].set_text, "● Syncing..." if is_running else "● Idle / Finished")
+        if tab := self.tabs.get(profile): 
+            if not is_running:
+                GLib.idle_add(tab['prog'].set_text, "Idle / Finished")
+                GLib.idle_add(tab['prog'].set_fraction, 0.0)
+                GLib.idle_add(tab['detail_lbl'].set_markup, "<span size='small' color='gray'>Speed: 0 B/s | ETA: -</span>")
+                if 'transfer_btn' in tab:
+                    GLib.idle_add(tab['transfer_btn'].set_label, "Active Transfers (0)")
+                    GLib.idle_add(lambda: [tab['transfer_box'].remove(c) for c in tab['transfer_box'].get_children()] or False)
+            else:
+                GLib.idle_add(tab['prog'].set_text, "Syncing...")
 
     def update_logs(self, profile, actions):
         if not (tab := self.tabs.get(profile)): return False
@@ -99,16 +137,59 @@ class LiveOutputPanel:
                 if not buf.get_tag_table().lookup(level): level = "INFO" 
                 
                 import re
-                parts = re.split(r'(https?://[^\s<>]+[^.,:;\"\s<>])', str(msg))
-                for p in parts:
-                    if p.startswith('http'):
-                        buf.insert_with_tags_by_name(buf.get_end_iter(), p, level, "LINK")
+                ansi_re = re.compile(r'\x1B\[([0-9;]*)[mK]')
+                text_parts = ansi_re.split(str(msg))
+                
+                current_ansi = None
+                for i, part in enumerate(text_parts):
+                    if i % 2 == 1:
+                        if part in ["0", ""]: current_ansi = None
+                        else:
+                            for c in part.split(';'):
+                                if c in ['30','31','32','33','34','35','36','37','90']:
+                                    current_ansi = f"ansi_{c}"
                     else:
-                        buf.insert_with_tags_by_name(buf.get_end_iter(), p, level)
+                        if part:
+                            tags = [level]
+                            if current_ansi: tags.append(current_ansi)
+                            
+                            url_parts = re.split(r'(https?://[^\s<>]+[^.,:;\"\s<>])', part)
+                            for u in url_parts:
+                                if u.startswith('http'):
+                                    buf.insert_with_tags_by_name(buf.get_end_iter(), u, *(tags + ["LINK"]))
+                                elif u:
+                                    buf.insert_with_tags_by_name(buf.get_end_iter(), u, *tags)
                 scroll = True
             elif k == "stats":
                 d = act[1]
-                tab['status'].set_text(f"● {d.get('msg') or f'Transferred: {d.get('bytes',0)} | Speed: {d.get('speed',0)}/s' if isinstance(d, dict) else str(d) or 'Syncing...'}")
+                def fmt_b(b):
+                    for u in ['B','KB','MB','GB','TB']:
+                        if b < 1024: return f"{b:.1f} {u}"
+                        b /= 1024
+                    return f"{b:.1f} PB"
+
+                if "bytes" in d:
+                    b_tot, b_done = d.get('totalBytes', 0), d.get('bytes', 0)
+                    frac = b_done / b_tot if b_tot > 0 else 0.0
+                    tab['prog'].set_fraction(frac)
+                    tab['prog'].set_text(f"{fmt_b(b_done)} / {fmt_b(b_tot)} ({int(frac*100)}%)")
+                    eta = d.get('eta')
+                    tab['detail_lbl'].set_markup(f"<span size='small' color='gray'>Speed: {fmt_b(d.get('speed',0))}/s | ETA: {f'{eta}s' if eta is not None else '-'} | Checks: {d.get('checks',0)} | Deletes: {d.get('deletes',0)}</span>")
+                    
+                    trs = d.get('transferring', [])
+                    tab['transfer_btn'].set_label(f"Active Transfers ({len(trs)})")
+                    for c in tab['transfer_box'].get_children(): tab['transfer_box'].remove(c)
+                    
+                    for t in trs:
+                        hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                        tl = Gtk.Label(label=f"{t.get('name', '...')}", xalign=0, ellipsize=Pango.EllipsizeMode.START)
+                        tl.set_max_width_chars(50)
+                        tp = Gtk.ProgressBar(); tp.set_fraction(t.get('percentage', 0)/100.0); tp.set_show_text(True); tp.set_text(f"{t.get('percentage', 0)}%")
+                        hb.pack_start(tl, True, True, 0); hb.pack_end(tp, False, False, 0)
+                        tab['transfer_box'].pack_start(hb, False, False, 0)
+                    tab['transfer_box'].show_all()
+                else:
+                    tab['prog'].set_text(f"{d.get('msg', 'Syncing...')}")
         if scroll: 
             # --- CRITICAL FIX: Move the single mark instead of creating thousands ---
             buf.move_mark(tab['scroll_mark'], buf.get_end_iter())

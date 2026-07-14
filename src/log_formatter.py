@@ -12,26 +12,31 @@ def format_line(line: str):
 
     try:
         data = json.loads(stripped)
-        if "stats" in data or "transferred" in data: 
+        
+        # Force early return so stats strings don't clutter the main log window
+        if "stats" in data:
+            return [("stats", data["stats"])]
+        if "transferred" in data:
             return [("stats", data)]
-        
-        msg = ANSI_ESCAPE.sub('', data.get("msg", "")).strip()
-        if not msg: return[]
-
-        obj = data.get("object", "")
-        if obj and obj not in msg: msg = f"{msg}: {obj}"
-        
-        level = str(data.get("level", "INFO")).upper()
-        
-        # Strip out massive internal Go pointer structs injected in Level 2 Logs (-vv)
-        if level == "DEBUG":
-            if "starting to march!: &{" in msg:
-                msg = msg.split("&{")[0] + "[Internal Engine State Hidden]"
-            elif "march completed. err: " in msg and "&{" in msg:
-                msg = msg.split("&{")[0] + "[Internal Engine State Hidden]"
-                
-        # Return tuple expanded to provide UI Level-Routing
-        return [("log", f"[{level}] {msg}\n", level)]
+            
+        actions = []
+        msg = data.get("msg", "").strip()
+        if msg:
+            obj = data.get("object", "")
+            if obj and obj not in msg: msg = f"{msg}: {obj}"
+            
+            level = str(data.get("level", "INFO")).upper()
+            
+            # Strip out massive internal Go pointer structs injected in Level 2 Logs (-vv)
+            if level == "DEBUG":
+                if "starting to march!: &{" in msg:
+                    msg = msg.split("&{")[0] + "[Internal Engine State Hidden]"
+                elif "march completed. err: " in msg and "&{" in msg:
+                    msg = msg.split("&{")[0] + "[Internal Engine State Hidden]"
+                    
+            actions.append(("log", f"[{level}] {msg}\n", level))
+            
+        return actions
         
     except json.JSONDecodeError:
         clean = ANSI_ESCAPE.sub('', stripped).strip()
