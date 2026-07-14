@@ -48,6 +48,20 @@
                   </object>
                 </child>
                 <child>
+                  <object class="GtkButton" id="btn_rclone_update">
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="tooltip-text">Update Rclone System-Wide</property>
+                    <style><class name="circular"/></style>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="visible">True</property>
+                        <property name="icon-name">software-update-available-symbolic</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
                   <object class="GtkButton" id="btn_rclone_gui">
                     <property name="visible">True</property>
                     <property name="can-focus">True</property>

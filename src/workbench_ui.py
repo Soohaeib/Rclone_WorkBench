@@ -1,6 +1,7 @@
 import gi, os, subprocess, datetime, tempfile, shutil, signal
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk, GLib
+gi.require_version("Pango", "1.0")
+from gi.repository import Gtk, Gdk, GLib, Pango
 from urllib.parse import unquote
 from src import config_manager, rules_engine, log_formatter, smart_engine, widget_factory
 from src.workbench_blueprint import LOG_DIR, TRASH_LOCAL_NAME, CONFIG_SCHEMA, SMART_SCHEMA, RCLONE_CONF_PATH
@@ -37,6 +38,30 @@ class LiveOutputPanel:
             buf.create_tag("WARNING", foreground="#e67e22")
             buf.create_tag("NOTICE", foreground="#3498db")
             buf.create_tag("INFO") 
+            tag_link = buf.create_tag("LINK", underline=Pango.Underline.SINGLE)
+            
+            def _on_click(view, event, b=buf):
+                if event.button != 1: return False
+                try:
+                    x, y = view.window_to_buffer_coords(Gtk.TextWindowType.TEXT, int(event.x), int(event.y))
+                    _, it = view.get_iter_at_position(x, y)
+                    if it.has_tag(tag_link):
+                        start, end = it.copy(), it.copy()
+                        if not start.starts_tag(tag_link): start.backward_to_tag_toggle(tag_link)
+                        if not end.ends_tag(tag_link): end.forward_to_tag_toggle(tag_link)
+                        subprocess.Popen(['xdg-open', b.get_text(start, end, False)])
+                except: pass
+                
+            def _on_hover(view, event):
+                try:
+                    x, y = view.window_to_buffer_coords(Gtk.TextWindowType.TEXT, int(event.x), int(event.y))
+                    _, it = view.get_iter_at_position(x, y)
+                    view.get_window(Gtk.TextWindowType.TEXT).set_cursor(Gdk.Cursor.new(Gdk.CursorType.HAND2) if it.has_tag(tag_link) else Gdk.Cursor.new(Gdk.CursorType.XTERM))
+                except: pass
+                
+            tv.connect("button-release-event", _on_click)
+            tv.connect("motion-notify-event", _on_hover)
+            tv.add_events(Gdk.EventMask.POINTER_MOTION_MASK)
             
             sw = Gtk.ScrolledWindow(); sw.set_shadow_type(Gtk.ShadowType.IN); sw.add(tv); vbox.pack_start(sw, True, True, 0)
             self.notebook.append_page(vbox, Gtk.Label(label=p.upper()))
@@ -72,7 +97,14 @@ class LiveOutputPanel:
                 msg = act[1]
                 level = act[2] if len(act) > 2 else "INFO"
                 if not buf.get_tag_table().lookup(level): level = "INFO" 
-                buf.insert_with_tags_by_name(buf.get_end_iter(), str(msg), level)
+                
+                import re
+                parts = re.split(r'(https?://[^\s<>]+[^.,:;\"\s<>])', str(msg))
+                for p in parts:
+                    if p.startswith('http'):
+                        buf.insert_with_tags_by_name(buf.get_end_iter(), p, level, "LINK")
+                    else:
+                        buf.insert_with_tags_by_name(buf.get_end_iter(), p, level)
                 scroll = True
             elif k == "stats":
                 d = act[1]
@@ -145,6 +177,9 @@ class InventoryWorkbench:
             self.btn_rclone_gui.connect("clicked", self.toggle_rclone_gui)
         self.gui_process = None
         # ==============================================================================
+        self.btn_rclone_update = self.builder.get_object("btn_rclone_update")
+        if self.btn_rclone_update:
+            self.btn_rclone_update.connect("clicked", self.update_rclone_system)
 
         self.path_entry.drag_dest_set(Gtk.DestDefaults.ALL,[], Gdk.DragAction.COPY)
         self.path_entry.drag_dest_add_uri_targets()
@@ -218,29 +253,33 @@ class InventoryWorkbench:
         if hasattr(self, 'current_trash_path') and os.path.exists(self.current_trash_path):
             subprocess.Popen(['xdg-open', self.current_trash_path])
 
+    # --- SYSTEM UPDATE MODULE ---
+    def update_rclone_system(self, btn):
+        import shutil
+        terms = ['x-terminal-emulator', 'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty', 'kitty', 'xterm']
+        term = next((t for t in terms if shutil.which(t)), None)
+        
+        if term:
+            cmd = "echo '============================='; echo 'Rclone System Updater'; echo '============================='; sudo rclone selfupdate; echo ''; read -p 'Press Enter to close...'"
+            if term in ['gnome-terminal', 'xfce4-terminal', 'alacritty']:
+                subprocess.Popen([term, '--', 'bash', '-c', cmd])
+            else:
+                subprocess.Popen([term, '-e', 'bash', '-c', cmd])
+        else:
+            subprocess.Popen(['notify-send', 'Update Error', 'No compatible terminal emulator found.', '-i', 'dialog-error'])
+
+
     # --- DYNAMIC CONFIGURATION PORTAL MODE ---
     def toggle_rclone_gui(self, btn):
         if not self.gui_process:
             try:
-                # Create a secure temporary runtime directory for path interception
-                self.sudo_interceptor_dir = tempfile.mkdtemp()
-                sudo_hook_path = os.path.join(self.sudo_interceptor_dir, "sudo")
-                
-                # Write an elegant pseudo-binary mapping background sudo requests to GUI PolicyKit
-                with open(sudo_hook_path, "w") as hook_file:
-                    hook_file.write("#!/bin/sh\nexec pkexec \"$@\"\n")
-                os.chmod(sudo_hook_path, 0o755)
-                
-                # Prepend the interceptor directory directly into the child process environment
-                portal_env = os.environ.copy()
-                portal_env["PATH"] = self.sudo_interceptor_dir + os.path.pathsep + portal_env.get("PATH", "")
+                subprocess.Popen(['notify-send', 'Rclone Web Portal', 'You can safely manage configs here.\n\nNOTE: Do NOT use the portal to update Rclone. Use the dedicated update button instead.', '-i', 'dialog-warning'])
                 
                 self.gui_process = subprocess.Popen(
                     ["rclone", "gui"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    preexec_fn=os.setsid,
-                    env=portal_env
+                    preexec_fn=os.setsid
                 )
                 
                 # Toggle visual state with a custom CSS provider to enforce red background while keeping circular shape
@@ -267,11 +306,6 @@ class InventoryWorkbench:
                 os.killpg(os.getpgid(self.gui_process.pid), signal.SIGTERM)
             except: pass
             self.gui_process = None
-            
-            # Clean up the localized runtime interceptor safely
-            if hasattr(self, 'sudo_interceptor_dir') and self.sudo_interceptor_dir:
-                shutil.rmtree(self.sudo_interceptor_dir, ignore_errors=True)
-                self.sudo_interceptor_dir = None
             
             # Return portal button back to its initial textless entry state
             self.btn_rclone_gui.set_tooltip_text("Launch official Rclone Web Configurator")
