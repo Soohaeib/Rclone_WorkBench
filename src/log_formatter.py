@@ -13,6 +13,9 @@ def format_line(line: str):
     try:
         data = json.loads(stripped)
         
+        if "session_start" in data:
+            return [("divider", data["session_start"])]
+            
         # Force early return so stats strings don't clutter the main log window
         if "stats" in data:
             return [("stats", data["stats"])]
@@ -34,7 +37,8 @@ def format_line(line: str):
                 elif "march completed. err: " in msg and "&{" in msg:
                     msg = msg.split("&{")[0] + "[Internal Engine State Hidden]"
                     
-            actions.append(("log", f"[{level}] {msg}\n", level))
+            prefix = f"[{level}] "
+            actions.append(("log", prefix, f"{msg}\n", level))
             
         return actions
         

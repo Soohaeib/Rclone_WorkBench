@@ -9,8 +9,8 @@ def run_sync_session(profile: str, args: list, proc_callback=None):
     cmd = ["rclone"] + args + ["-v", "--use-json-log", "--stats", "1s", "--stats-one-line"]
     
     with open(log_path, "a", encoding="utf-8") as f:
-        timestamp = datetime.datetime.now().isoformat()
-        divider = json.dumps({"time": timestamp, "level": "info", "msg": f"━━━━━━━━━━━ [{timestamp}] ━━━━━━━━━━━"})
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+        divider = json.dumps({"session_start": timestamp})
         f.write(divider + "\n")
     
     process = subprocess.Popen(

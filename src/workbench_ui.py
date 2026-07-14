@@ -47,6 +47,7 @@ class LiveOutputPanel:
             btn_box.pack_start(_btn("edit-clear-symbolic", "Clear Display", lambda _, x=p: self.tabs[x]["buffer"].set_text("")), False, False, 0)
             btn_box.pack_start(_btn("view-refresh-symbolic", "Reload Log", lambda _, x=p: self.reload_log(x)), False, False, 0)
             btn_box.pack_start(_btn("ymuse-delete-symbolic", "Delete Log", lambda _, x=p: (os.remove(log) if os.path.exists(log := os.path.join(LOG_DIR, f"{x}_sync.jsonl")) else None) or self.tabs[x]['buffer'].set_text("[SYSTEM] Log deleted.\n")), False, False, 0)
+            btn_box.pack_start(_btn("format-text-wrap-symbolic", "Toggle Line Wrap", lambda _, x=p: self.toggle_wrap(x)), False, False, 0)
             btn_box.pack_start(_btn("folder-open-symbolic", "Open Log Dir", lambda _, x=p: os.makedirs(LOG_DIR, exist_ok=True) or subprocess.Popen(['xdg-open', LOG_DIR])), False, False, 0)
             
             header.pack_end(btn_box, False, False, 0)
@@ -55,11 +56,20 @@ class LiveOutputPanel:
             tv = Gtk.TextView(editable=False, cursor_visible=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
             tv.set_monospace(True); tv.get_style_context().add_class("log-view")
             buf = tv.get_buffer()
-            buf.create_tag("DEBUG", foreground="#7f8c8d")
+            buf.create_tag("DEBUG", foreground="#95a5a6")
             buf.create_tag("ERROR", foreground="#e74c3c", weight=700)
             buf.create_tag("WARNING", foreground="#e67e22")
             buf.create_tag("NOTICE", foreground="#3498db")
             buf.create_tag("INFO") 
+            
+            buf.create_tag("tag_DEBUG", foreground="#7f8c8d", weight=700)
+            buf.create_tag("tag_ERROR", foreground="#c0392b", weight=700)
+            buf.create_tag("tag_WARNING", foreground="#d35400", weight=700)
+            buf.create_tag("tag_NOTICE", foreground="#2980b9", weight=700)
+            buf.create_tag("tag_INFO", foreground="#27ae60", weight=700)
+            
+            buf.create_tag("divider", justification=Gtk.Justification.CENTER, foreground="#95a5a6", weight=700)
+            
             tag_link = buf.create_tag("LINK", underline=Pango.Underline.SINGLE)
             
             for code, color in [("30", "gray"), ("31", "#e74c3c"), ("32", "#2ecc71"), ("33", "#f1c40f"), ("34", "#3498db"), ("35", "#9b59b6"), ("36", "#1abc9c"), ("37", "white"), ("90", "gray")]:
@@ -92,7 +102,7 @@ class LiveOutputPanel:
             tv.connect("motion-notify-event", _on_hover)
             tv.add_events(Gdk.EventMask.POINTER_MOTION_MASK)
             
-            sw = Gtk.ScrolledWindow(); sw.set_shadow_type(Gtk.ShadowType.IN); sw.add(tv); vbox.pack_start(sw, True, True, 0)
+            sw = Gtk.ScrolledWindow(); sw.set_shadow_type(Gtk.ShadowType.IN); sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC); sw.add(tv); vbox.pack_start(sw, True, True, 0)
             self.notebook.append_page(vbox, Gtk.Label(label=p.upper()))
             
             # --- CRITICAL FIX: Create ONE persistent scroll mark to prevent rendering crashes ---
@@ -113,6 +123,18 @@ class LiveOutputPanel:
             try: GLib.idle_add(self.update_logs, profile,[a for line in open(path, "r", encoding="utf-8") for a in log_formatter.format_line(line)])
             except: pass
 
+    def toggle_wrap(self, profile):
+        if tab := self.tabs.get(profile):
+            tv = tab['tv']
+            new_mode = Gtk.WrapMode.NONE if tv.get_wrap_mode() != Gtk.WrapMode.NONE else Gtk.WrapMode.WORD_CHAR
+            tv.set_wrap_mode(new_mode)
+
+    def toggle_wrap(self, profile):
+        if tab := self.tabs.get(profile):
+            tv = tab['tv']
+            new_mode = Gtk.WrapMode.NONE if tv.get_wrap_mode() != Gtk.WrapMode.NONE else Gtk.WrapMode.WORD_CHAR
+            tv.set_wrap_mode(new_mode)
+
     def set_status(self, profile, is_running):
         if tab := self.tabs.get(profile): 
             if not is_running:
@@ -132,9 +154,14 @@ class LiveOutputPanel:
         for act in actions:
             k = act[0]
             if k == "log":
-                msg = act[1]
-                level = act[2] if len(act) > 2 else "INFO"
-                if not buf.get_tag_table().lookup(level): level = "INFO" 
+                if len(act) == 4:
+                    prefix, msg, level = act[1], act[2], act[3]
+                    if not buf.get_tag_table().lookup(level): level = "INFO"
+                    buf.insert_with_tags_by_name(buf.get_end_iter(), prefix, f"tag_{level}")
+                else:
+                    msg = act[1]
+                    level = act[2] if len(act) > 2 else "INFO"
+                    if not buf.get_tag_table().lookup(level): level = "INFO" 
                 
                 import re
                 ansi_re = re.compile(r'\x1B\[([0-9;]*)[mK]')
@@ -159,6 +186,23 @@ class LiveOutputPanel:
                                     buf.insert_with_tags_by_name(buf.get_end_iter(), u, *(tags + ["LINK"]))
                                 elif u:
                                     buf.insert_with_tags_by_name(buf.get_end_iter(), u, *tags)
+                scroll = True
+            elif k == "divider":
+                ts = act[1]
+                try:
+                    dt = datetime.datetime.strptime(ts, "%Y-%m-%d %I:%M:%S %p")
+                    now = datetime.datetime.now()
+                    time_part = dt.strftime("%I:%M:%S %p")
+                    if dt.date() == now.date():
+                        ts_display = f"Today at {time_part}"
+                    elif dt.date() == (now.date() - datetime.timedelta(days=1)):
+                        ts_display = f"Yesterday at {time_part}"
+                    else:
+                        ts_display = dt.strftime("%b %d, %Y at %I:%M:%S %p")
+                except:
+                    ts_display = ts
+                
+                buf.insert_with_tags_by_name(buf.get_end_iter(), f"\n━━━━━━━━━━━ Session: {ts_display} ━━━━━━━━━━━\n\n", "divider")
                 scroll = True
             elif k == "stats":
                 d = act[1]
