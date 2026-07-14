@@ -47,7 +47,13 @@ class LiveOutputPanel:
             btn_box.pack_start(_btn("edit-clear-symbolic", "Clear Display", lambda _, x=p: self.tabs[x]["buffer"].set_text("")), False, False, 0)
             btn_box.pack_start(_btn("view-refresh-symbolic", "Reload Log", lambda _, x=p: self.reload_log(x)), False, False, 0)
             btn_box.pack_start(_btn("ymuse-delete-symbolic", "Delete Log", lambda _, x=p: (os.remove(log) if os.path.exists(log := os.path.join(LOG_DIR, f"{x}_sync.jsonl")) else None) or self.tabs[x]['buffer'].set_text("[SYSTEM] Log deleted.\n")), False, False, 0)
-            btn_box.pack_start(_btn("format-text-wrap-symbolic", "Toggle Line Wrap", lambda _, x=p: self.toggle_wrap(x)), False, False, 0)
+            
+            wrap_btn = Gtk.ToggleButton(tooltip_text="Toggle Line Wrap")
+            wrap_btn.add(Gtk.Image.new_from_icon_name("format-text-wrap-symbolic", Gtk.IconSize.BUTTON))
+            wrap_btn.set_active(True)
+            wrap_btn.connect("toggled", lambda btn, x=p: self.toggle_wrap(x, btn))
+            btn_box.pack_start(wrap_btn, False, False, 0)
+            
             btn_box.pack_start(_btn("folder-open-symbolic", "Open Log Dir", lambda _, x=p: os.makedirs(LOG_DIR, exist_ok=True) or subprocess.Popen(['xdg-open', LOG_DIR])), False, False, 0)
             
             header.pack_end(btn_box, False, False, 0)
@@ -55,6 +61,9 @@ class LiveOutputPanel:
             
             tv = Gtk.TextView(editable=False, cursor_visible=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
             tv.set_monospace(True); tv.get_style_context().add_class("log-view")
+            tv.set_pixels_above_lines(2)
+            tv.set_pixels_below_lines(2)
+            tv.set_pixels_inside_wrap(1)
             buf = tv.get_buffer()
             buf.create_tag("DEBUG", foreground="#95a5a6")
             buf.create_tag("ERROR", foreground="#e74c3c", weight=700)
@@ -123,17 +132,10 @@ class LiveOutputPanel:
             try: GLib.idle_add(self.update_logs, profile,[a for line in open(path, "r", encoding="utf-8") for a in log_formatter.format_line(line)])
             except: pass
 
-    def toggle_wrap(self, profile):
+    def toggle_wrap(self, profile, btn):
         if tab := self.tabs.get(profile):
             tv = tab['tv']
-            new_mode = Gtk.WrapMode.NONE if tv.get_wrap_mode() != Gtk.WrapMode.NONE else Gtk.WrapMode.WORD_CHAR
-            tv.set_wrap_mode(new_mode)
-
-    def toggle_wrap(self, profile):
-        if tab := self.tabs.get(profile):
-            tv = tab['tv']
-            new_mode = Gtk.WrapMode.NONE if tv.get_wrap_mode() != Gtk.WrapMode.NONE else Gtk.WrapMode.WORD_CHAR
-            tv.set_wrap_mode(new_mode)
+            tv.set_wrap_mode(Gtk.WrapMode.WORD_CHAR if btn.get_active() else Gtk.WrapMode.NONE)
 
     def set_status(self, profile, is_running):
         if tab := self.tabs.get(profile): 
@@ -331,12 +333,26 @@ class InventoryWorkbench:
         
         def on_reset_clicked(btn):
             menu = Gtk.Menu()
-            i_default = Gtk.MenuItem(label="⟳ Reset to Stable Defaults")
+            
+            def create_menu_item_with_icon(icon_name, text):
+                item = Gtk.MenuItem()
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                icon = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU)
+                lbl = Gtk.Label(label=text, xalign=0)
+                box.pack_start(icon, False, False, 0)
+                box.pack_start(lbl, True, True, 0)
+                box.show_all()
+                item.add(box)
+                return item
+                
+            i_default = create_menu_item_with_icon("view-refresh-symbolic", "Reset to Stable Defaults")
             i_default.connect("activate", lambda _: self.reset_to_factory_defaults(None))
             menu.append(i_default)
-            i_last = Gtk.MenuItem(label="↩ Revert to Last Saved State")
-            i_last.connect("activate", lambda _: setattr(self, 'global_cfg', config_manager.load_config()) or self.load_data())
+            
+            i_last = create_menu_item_with_icon("document-revert-symbolic", "Revert to Last Saved State")
+            i_last.connect("activate", lambda _: setattr(self, 'global_cfg', config_manager.load_config(force_reload=True)) or self.load_data())
             menu.append(i_last)
+            
             menu.show_all()
             menu.popup_at_widget(btn, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None)
 
