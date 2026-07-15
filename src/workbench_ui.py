@@ -20,40 +20,59 @@ class LiveOutputPanel:
             header.set_margin_bottom(6)
             
             stats_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            prog = Gtk.ProgressBar(); prog.set_show_text(True); prog.set_text("Idle / Finished")
+            prog = Gtk.ProgressBar(); prog.set_show_text(False) # Turn off messy text overlay
             
             metrics_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-            detail_lbl = Gtk.Label(xalign=0); detail_lbl.set_markup("<span size='small' color='gray'>Speed: 0 B/s | ETA: -</span>")
-            
-            transfer_btn = Gtk.MenuButton(label="Active Transfers (0)")
-            transfer_popover = Gtk.Popover.new(transfer_btn)
-            transfer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            transfer_box.set_margin_start(8); transfer_box.set_margin_end(8); transfer_box.set_margin_top(8); transfer_box.set_margin_bottom(8)
-            transfer_popover.add(transfer_box)
-            transfer_btn.set_popover(transfer_popover)
+            detail_lbl = Gtk.Label(xalign=0); detail_lbl.set_markup("<span size='small' color='gray'>Speed: 0 B/s | ETA: - | Checks: 0 | Deletes: 0</span>")
+            progress_lbl = Gtk.Label(xalign=1); progress_lbl.set_markup("<span size='small' color='gray'>Finished</span>")
             
             metrics_box.pack_start(detail_lbl, True, True, 0)
-            metrics_box.pack_end(transfer_btn, False, False, 0)
+            metrics_box.pack_end(progress_lbl, False, False, 0)
             
             stats_box.pack_start(prog, False, False, 0)
             stats_box.pack_start(metrics_box, False, False, 0)
             
             header.pack_start(stats_box, True, True, 0)
             
-            def _btn(icon, tip, cb): b = Gtk.Button(tooltip_text=tip); b.add(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.BUTTON)); b.connect("clicked", cb); return b
+            def _btn(icon, tip, cb):
+                b = Gtk.Button(tooltip_text=tip)
+                b.add(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.BUTTON))
+                b.get_style_context().add_class("log-header-btn")
+                b.connect("clicked", cb)
+                return b
             
             btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
             btn_box.set_valign(Gtk.Align.CENTER)
-            btn_box.pack_start(_btn("edit-clear-symbolic", "Clear Display", lambda _, x=p: self.tabs[x]["buffer"].set_text("")), False, False, 0)
-            btn_box.pack_start(_btn("view-refresh-symbolic", "Reload Log", lambda _, x=p: self.reload_log(x)), False, False, 0)
-            btn_box.pack_start(_btn("ymuse-delete-symbolic", "Delete Log", lambda _, x=p: (os.remove(log) if os.path.exists(log := os.path.join(LOG_DIR, f"{x}_sync.jsonl")) else None) or self.tabs[x]['buffer'].set_text("[SYSTEM] Log deleted.\n")), False, False, 0)
+            
+            # Stylized Active Task menu button with a Live badge counter
+            transfer_btn = Gtk.MenuButton(tooltip_text="Active Transfers")
+            transfer_btn.get_style_context().add_class("log-header-btn")
+            t_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+            t_icon = Gtk.Image.new_from_icon_name("view-list-symbolic", Gtk.IconSize.BUTTON)
+            transfer_lbl = Gtk.Label(label="0")
+            t_box.pack_start(t_icon, False, False, 0)
+            t_box.pack_start(transfer_lbl, False, False, 0)
+            t_box.show_all()
+            transfer_btn.add(t_box)
+            
+            transfer_popover = Gtk.Popover.new(transfer_btn)
+            transfer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            transfer_box.set_margin_start(8); transfer_box.set_margin_end(8); transfer_box.set_margin_top(8); transfer_box.set_margin_bottom(8)
+            transfer_popover.add(transfer_box)
+            transfer_btn.set_popover(transfer_popover)
             
             wrap_btn = Gtk.ToggleButton(tooltip_text="Toggle Line Wrap")
+            wrap_btn.get_style_context().add_class("log-header-btn")
             wrap_btn.add(Gtk.Image.new_from_icon_name("format-text-wrap-symbolic", Gtk.IconSize.BUTTON))
             wrap_btn.set_active(True)
             wrap_btn.connect("toggled", lambda btn, x=p: self.toggle_wrap(x, btn))
-            btn_box.pack_start(wrap_btn, False, False, 0)
             
+            # Sorted contextually left-to-right (System State -> Render/Visual -> Operations -> External System)
+            btn_box.pack_start(transfer_btn, False, False, 0)
+            btn_box.pack_start(wrap_btn, False, False, 0)
+            btn_box.pack_start(_btn("edit-clear-symbolic", "Clear Display", lambda _, x=p: self.tabs[x]["buffer"].set_text("")), False, False, 0)
+            btn_box.pack_start(_btn("view-refresh-symbolic", "Reload Log", lambda _, x=p: self.reload_log(x)), False, False, 0)
+            btn_box.pack_start(_btn("ymuse-delete-symbolic", "Delete Log", lambda _, x=p: (os.remove(log) if os.path.exists(log := os.path.join(LOG_DIR, f"{x}_sync.jsonl")) else None) or self.tabs[x]['buffer'].set_text("[SYSTEM] Log deleted.\n")), False, False, 0)
             btn_box.pack_start(_btn("folder-open-symbolic", "Open Log Dir", lambda _, x=p: os.makedirs(LOG_DIR, exist_ok=True) or subprocess.Popen(['xdg-open', LOG_DIR])), False, False, 0)
             
             header.pack_end(btn_box, False, False, 0)
@@ -117,7 +136,7 @@ class LiveOutputPanel:
             # --- CRITICAL FIX: Create ONE persistent scroll mark to prevent rendering crashes ---
             scroll_mark = buf.create_mark("scroll_end", buf.get_end_iter(), False)
             
-            self.tabs[p] = {'vbox': vbox, 'buffer': buf, 'tv': tv, 'sw': sw, 'scroll_mark': scroll_mark, 'prog': prog, 'detail_lbl': detail_lbl, 'transfer_btn': transfer_btn, 'transfer_box': transfer_box}
+            self.tabs[p] = {'vbox': vbox, 'buffer': buf, 'tv': tv, 'sw': sw, 'scroll_mark': scroll_mark, 'prog': prog, 'detail_lbl': detail_lbl, 'progress_lbl': progress_lbl, 'transfer_lbl': transfer_lbl, 'transfer_box': transfer_box}
             log_formatter.start_live_feed(p, lambda a, x=p: GLib.idle_add(self.update_logs, x, a))
             
         self.notebook.connect("switch-page", lambda n, page, page_num: self.change_callback(n.get_tab_label(page).get_text()) if self.change_callback else None)
@@ -140,14 +159,14 @@ class LiveOutputPanel:
     def set_status(self, profile, is_running):
         if tab := self.tabs.get(profile): 
             if not is_running:
-                GLib.idle_add(tab['prog'].set_text, "Idle / Finished")
                 GLib.idle_add(tab['prog'].set_fraction, 0.0)
+                GLib.idle_add(tab['progress_lbl'].set_markup, "<span size='small' color='gray'>Finished</span>")
                 GLib.idle_add(tab['detail_lbl'].set_markup, "<span size='small' color='gray'>Speed: 0 B/s | ETA: -</span>")
-                if 'transfer_btn' in tab:
-                    GLib.idle_add(tab['transfer_btn'].set_label, "Active Transfers (0)")
+                if 'transfer_lbl' in tab:
+                    GLib.idle_add(tab['transfer_lbl'].set_label, "0")
                     GLib.idle_add(lambda: [tab['transfer_box'].remove(c) for c in tab['transfer_box'].get_children()] or False)
             else:
-                GLib.idle_add(tab['prog'].set_text, "Syncing...")
+                GLib.idle_add(tab['progress_lbl'].set_markup, "<span size='small' color='gray'>Syncing...</span>")
 
     def update_logs(self, profile, actions):
         if not (tab := self.tabs.get(profile)): return False
@@ -218,12 +237,12 @@ class LiveOutputPanel:
                     b_tot, b_done = d.get('totalBytes', 0), d.get('bytes', 0)
                     frac = b_done / b_tot if b_tot > 0 else 0.0
                     tab['prog'].set_fraction(frac)
-                    tab['prog'].set_text(f"{fmt_b(b_done)} / {fmt_b(b_tot)} ({int(frac*100)}%)")
+                    tab['progress_lbl'].set_markup(f"<span size='small' color='gray'>{fmt_b(b_done)} / {fmt_b(b_tot)} ({int(frac*100)}%)</span>")
                     eta = d.get('eta')
                     tab['detail_lbl'].set_markup(f"<span size='small' color='gray'>Speed: {fmt_b(d.get('speed',0))}/s | ETA: {f'{eta}s' if eta is not None else '-'} | Checks: {d.get('checks',0)} | Deletes: {d.get('deletes',0)}</span>")
                     
                     trs = d.get('transferring', [])
-                    tab['transfer_btn'].set_label(f"Active Transfers ({len(trs)})")
+                    tab['transfer_lbl'].set_text(str(len(trs)))
                     for c in tab['transfer_box'].get_children(): tab['transfer_box'].remove(c)
                     
                     for t in trs:
@@ -235,7 +254,7 @@ class LiveOutputPanel:
                         tab['transfer_box'].pack_start(hb, False, False, 0)
                     tab['transfer_box'].show_all()
                 else:
-                    tab['prog'].set_text(f"{d.get('msg', 'Syncing...')}")
+                    tab['progress_lbl'].set_markup(f"<span size='small' color='gray'>{d.get('msg', 'Syncing...')}</span>")
         if scroll: 
             # --- CRITICAL FIX: Move the single mark instead of creating thousands ---
             buf.move_mark(tab['scroll_mark'], buf.get_end_iter())
@@ -490,7 +509,7 @@ class InventoryWorkbench:
     def present(self): self.window.present()
     
     def _setup_minimal_css(self):
-        p = Gtk.CssProvider(); p.load_from_data(b".chip { border-radius: 999px; padding: 4px 10px; margin: 2px; } .canvas-card { margin-bottom: 6px; padding: 10px; border-bottom: 1px solid alpha(gray, 0.2); }")
+        p = Gtk.CssProvider(); p.load_from_data(b".chip { border-radius: 999px; padding: 4px 10px; margin: 2px; } .canvas-card { margin-bottom: 6px; padding: 10px; border-bottom: 1px solid alpha(gray, 0.2); } .log-header-btn { padding: 2px 6px; min-height: 24px; min-width: 28px; margin: 0; }")
         Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), p, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
     def setup_smart_presets(self):

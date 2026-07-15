@@ -15,9 +15,14 @@ class SyncThread(threading.Thread):
         super().__init__(daemon=True)
         self.profile, self.path, self.app = profile, path, app
         self.trigger = threading.Event()
-        self.run_state, self.err, self.last, self.proc = False, False, "Never", None
-        self.last = log_formatter.get_last_run_time(profile)
+        
+        self.run_state, self.proc = False, None
         self.kill_clicks = 0
+        
+        self.last = log_formatter.get_last_run_time(profile)
+        status = log_formatter.get_last_run_status(profile)
+        self.err = (status == "Failed")
+        self.cancelled = (status == "Cancelled")
 
     def trigger_sync(self): self.trigger.set()
 
@@ -27,7 +32,7 @@ class SyncThread(threading.Thread):
             self.trigger.wait() 
             self.trigger.clear()
             
-            self.run_state, self.err = True, False
+            self.run_state, self.err, self.cancelled = True, False, False
             self.kill_clicks = 0
             
             GLib.idle_add(self.app.update_menu)
@@ -70,9 +75,14 @@ class SyncThread(threading.Thread):
             res = rclone_runner.run_sync_session(self.profile, args, _set_proc)
 
             self.run_state = False
-            self.err = not res.get("success", False)
-            self.last = datetime.datetime.now().isoformat()
             self.proc = None
+            
+            if self.kill_clicks > 0:
+                self.cancelled = True
+                self.err = False
+            else:
+                self.err = not res.get("success", False)
+                self.last = datetime.datetime.now().isoformat()
             
             if self.app.workbench:
                 self.app.workbench.set_status(self.profile, False)
@@ -168,7 +178,7 @@ class RCloneWorkbenchApp:
         cfg = config_manager.load_config()
 
         for p, t in self.threads.items():
-            state_icon = '🔴' if t.err else '🔵' if t.run_state else '⚪' if t.last == 'Never' else '🟢'
+            state_icon = '🔵' if t.run_state else '🔴' if t.err else '🟡' if getattr(t, 'cancelled', False) else '⚪' if t.last == 'Never' else '🟢'
             item = Gtk.MenuItem(label=f"{state_icon} {p:<12}")
             sub = Gtk.Menu()
             
@@ -198,12 +208,16 @@ class RCloneWorkbenchApp:
                 i_trash.set_sensitive(False) 
             sub.append(i_trash)
             
-            if t.err:
-                s_icon, s_text = "dialog-error-symbolic", "ERROR"
-            elif t.run_state:
+            if t.run_state:
                 s_icon, s_text = "view-refresh-symbolic", "Syncing..."
+            elif t.err:
+                s_icon, s_text = "dialog-error-symbolic", "ERROR"
+            elif getattr(t, 'cancelled', False):
+                s_icon, s_text = "process-stop-symbolic", "Cancelled"
+            elif t.last == 'Never':
+                s_icon, s_text = "media-playback-start-symbolic", "Never Run"
             else:
-                s_icon, s_text = "media-playback-start-symbolic", "Ready"
+                s_icon, s_text = "emblem-synchronizing-symbolic", "Ready"
                 
             i_status = create_icon_item(s_icon, f"Status: {s_text}")
             i_status.set_sensitive(False)

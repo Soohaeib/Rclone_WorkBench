@@ -60,6 +60,10 @@ def start_live_feed(profile: str, ui_callback):
         while not stop_event.is_set():
             if os.path.exists(path):
                 try:
+                    # Reset read pointer if the file has been truncated, deleted, or recreated
+                    if os.path.getsize(path) < last_pos:
+                        last_pos = 0
+                        
                     with open(path, "r", encoding="utf-8") as f:
                         f.seek(last_pos)
                         lines = f.readlines()
@@ -106,3 +110,31 @@ def get_last_run_time(profile: str) -> str:
         pass
         
     return "Never"
+
+def get_last_run_status(profile: str) -> str:
+    """Reads the end of the log file to determine the final status of the last run."""
+    path = os.path.join(LOG_DIR, f"{profile}_sync.jsonl")
+    if not os.path.exists(path): 
+        return "Never"
+    
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 8192))
+            lines = f.read().decode('utf-8', errors='ignore').splitlines()
+            
+        for line in reversed(lines):
+            if not line.strip(): continue
+            try:
+                data = json.loads(line)
+                msg = str(data.get("msg", "")).lower()
+                if "bisync successful" in msg:
+                    return "Success"
+                if "signal received: interrupt" in msg or "graceful shutdown" in msg:
+                    return "Cancelled"
+            except:
+                continue
+    except Exception:
+        pass
+        
+    return "Failed"
