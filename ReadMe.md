@@ -50,12 +50,9 @@ python3 app.py
 ## Disclaimer
 This project is currently in **Alpha/Concept stage**. While it includes multiple safety-audit layers, please **test with a dry-run flag (`--dry-run`)** or a dummy directory before syncing production data. Use at your own risk.
 
-## Architecture & Contributing
-We welcome developers! The codebase is strictly decoupled using a Component-Based MVC architecture: Data schemas, rule evaluations, system audits, and the GTK interface (split into Inventory, Live Logs, and a Global Controller) are all handled in separate modules.
+## For Users with the Same Pain Point
+If you struggle with `rclone bisync` safety, this tool might help you too.
 
-If you want to add new rclone flags, edit the logic engine, or understand the architecture, please read the [**DESIGN.md**](DESIGN.md) document.
-
-### Roadmap / Good First Issues
-Looking to contribute? Here are some areas we'd love help with:
-- [ ] **Systemd Integration:** A way to export current UI configurations to background systemd timers.
-- [ ] **More Smart Presets:** Add community-tested rule combinations for backends like S3 or WebDAV.
+* **Feedback:** If you find a bug that breaks your sync, please open an issue with your logs. I use this daily, so I prioritize fixing crashes.
+* **Transparency:** If you want to understand how the underlying safety logic and hardware audits work before trusting it with your data, please read the [**DESIGN.md**](DESIGN.md) document.
+* **Note:** This is a personal project built to solve my own specific workflow problems. I am not actively looking for feature PRs or maintaining a community roadmap, but I hope this helps you secure your own backups!
