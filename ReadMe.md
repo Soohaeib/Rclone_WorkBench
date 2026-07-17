@@ -51,7 +51,7 @@ python3 app.py
 This project is currently in **Alpha/Concept stage**. While it includes multiple safety-audit layers, please **test with a dry-run flag (`--dry-run`)** or a dummy directory before syncing production data. Use at your own risk.
 
 ## Architecture & Contributing
-We welcome developers! The codebase is strictly decoupled: Data schemas, rule evaluations, system audits, and GTK UI are all handled in separate modules.
+We welcome developers! The codebase is strictly decoupled using a Component-Based MVC architecture: Data schemas, rule evaluations, system audits, and the GTK interface (split into Inventory, Live Logs, and a Global Controller) are all handled in separate modules.
 
 If you want to add new rclone flags, edit the logic engine, or understand the architecture, please read the [**DESIGN.md**](DESIGN.md) document.
 

@@ -11,7 +11,9 @@ The Workbench operates as a multi-layered ecosystem where data, logic, and execu
 * **`rclone_runner.py`** (*The Backend Executor*): Manages subprocess calls and non-blocking JSONL log piping. Supports strict Two-Stage Process Termination (SIGINT gracefully, escalating to SIGKILL).
 * **`log_formatter.py`** (*The Parser*): Translates raw rclone JSONL logs into human-readable actions, intelligently parses log severities, and dynamically color-codes the live feed.
 * **`widget_factory.py`** (*The View/Factory*): Instantiates GTK widgets based on Dataclass properties, natively handles DND events, and enforces duplication rules.
-* **`workbench_ui.py`** (*The Canvas Linker*): The GTK3 interface controller featuring a real-time Global Command Center and background polling loop to update the UI with active system loads.
+* **`ui_live_output.py`** (*The Log Viewer Component*): Handles GTK Notebook rendering, Pango text-tags, and live terminal output streaming.
+* **`ui_inventory.py`** (*The Workbench Component*): Manages Smart Presets, the active configuration canvas, drag-and-drop mechanics, and compiling the CLI preview.
+* **`workbench_ui.py`** (*The Global Controller*): The lightweight main window controller. It loads the base Glade file, manages the Global Command Center (Sync/Stop/Update), and securely links the UI sub-components together.
 * **`app.py`** (*The System Tray Controller*): Manages background daemon threads and status emojis.
 
 ---
