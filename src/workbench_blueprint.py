@@ -4,7 +4,12 @@ from typing import List, Dict, Union, Any
 
 # This automatically figures out where the app is installed
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RCLONE_CONF_PATH = os.path.expanduser('~/.config/rclone/rclone.conf')
+import subprocess
+try:
+    _res = subprocess.run(['rclone', 'config', 'file'], capture_output=True, text=True)
+    RCLONE_CONF_PATH = _res.stdout.splitlines()[1].strip() if _res.returncode == 0 else os.path.expanduser('~/.config/rclone/rclone.conf')
+except:
+    RCLONE_CONF_PATH = os.path.expanduser('~/.config/rclone/rclone.conf')
 RCLONE_CACHE_DIR = os.path.expanduser('~/.cache/rclone/bisync')
 JSON_CONFIG_FILE = os.path.join(APP_DIR, 'bisync_settings.json')
 LOG_DIR = os.path.join(APP_DIR, 'logs')

@@ -127,8 +127,8 @@ class RCloneWorkbenchApp:
         signal.signal(signal.SIGINT, signal.SIG_DFL)
         self.threads, self.workbench, self.rc = {}, None, configparser.ConfigParser()
         
-        if not os.path.exists(workbench_blueprint.RCLONE_CONF_PATH) or not self.rc.read(workbench_blueprint.RCLONE_CONF_PATH) or not self.rc.sections():
-            notify("Error", "Valid rclone.conf not found or empty.", True); return
+        if os.path.exists(workbench_blueprint.RCLONE_CONF_PATH):
+            self.rc.read(workbench_blueprint.RCLONE_CONF_PATH)
 
         self.ind = AppIndicator3.Indicator.new("rclone_tray", "network-server", AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
         self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)

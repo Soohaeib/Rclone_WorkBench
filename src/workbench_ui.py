@@ -318,6 +318,7 @@ class InventoryWorkbench:
         # Rclone Web Portal Button
         self.btn_rclone_gui = self.builder.get_object("btn_rclone_gui")
         if self.btn_rclone_gui:
+            self.btn_rclone_gui.set_name("btn_rclone_gui")
             self.btn_rclone_gui.set_image(Gtk.Image.new_from_icon_name("web-browser-symbolic", Gtk.IconSize.BUTTON))
             self.btn_rclone_gui.set_always_show_image(True)
             self.btn_rclone_gui.connect("clicked", self.toggle_rclone_gui)
@@ -325,7 +326,9 @@ class InventoryWorkbench:
         # ==============================================================================
         self.btn_rclone_update = self.builder.get_object("btn_rclone_update")
         if self.btn_rclone_update:
+            self.btn_rclone_update.set_name("btn_rclone_update")
             self.btn_rclone_update.connect("clicked", self.update_rclone_system)
+            self._check_rclone_status()
 
         self.path_entry.drag_dest_set(Gtk.DestDefaults.ALL,[], Gdk.DragAction.COPY)
         self.path_entry.drag_dest_add_uri_targets()
@@ -413,20 +416,94 @@ class InventoryWorkbench:
         if hasattr(self, 'current_trash_path') and os.path.exists(self.current_trash_path):
             subprocess.Popen(['xdg-open', self.current_trash_path])
 
-    # --- SYSTEM UPDATE MODULE ---
-    def update_rclone_system(self, btn):
-        import shutil
-        terms = ['x-terminal-emulator', 'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty', 'kitty', 'xterm']
-        term = next((t for t in terms if shutil.which(t)), None)
+    # --- SYSTEM UPDATE & HEALTH MODULE ---
+    def _check_rclone_status(self):
+        import threading, subprocess, os, configparser
+        def _runner():
+            try:
+                res_ver = subprocess.run(['rclone', 'version'], capture_output=True, text=True)
+                if res_ver.returncode != 0:
+                    GLib.idle_add(self._set_system_state, "MISSING", None)
+                    return
+            except FileNotFoundError:
+                GLib.idle_add(self._set_system_state, "MISSING", None)
+                return
+            
+            rc = configparser.ConfigParser()
+            if not os.path.exists(RCLONE_CONF_PATH) or not rc.read(RCLONE_CONF_PATH) or not rc.sections():
+                GLib.idle_add(self._set_system_state, "NO_CONFIG", None)
+                return
+
+            GLib.idle_add(self._set_system_state, "OK", None)
+            
+        threading.Thread(target=_runner, daemon=True).start()
+
+    def _set_system_state(self, state, data):
+        if not hasattr(self, 'state_css'):
+            self.state_css = Gtk.CssProvider()
+            Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), self.state_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         
-        if term:
-            cmd = "echo '============================='; echo 'Rclone System Updater'; echo '============================='; sudo rclone selfupdate; echo ''; read -p 'Press Enter to close...'"
-            if term in ['gnome-terminal', 'xfce4-terminal', 'alacritty']:
-                subprocess.Popen([term, '--', 'bash', '-c', cmd])
-            else:
-                subprocess.Popen([term, '-e', 'bash', '-c', cmd])
+        self.btn_sync.set_sensitive(state == "OK" and not getattr(self, 'is_dirty', False))
+        self.btn_trash.set_sensitive(state == "OK")
+        self.main_stack.set_sensitive(state == "OK")
+        self.profile_combo.set_sensitive(state == "OK")
+        self.path_entry.set_sensitive(state == "OK")
+        self.btn_rclone_gui.set_sensitive(state in ["OK", "NO_CONFIG"])
+        
+        self.rclone_needs_install = (state == "MISSING")
+        
+        if state == "MISSING":
+            # RECOLORED: Red background for missing Rclone install mode action button
+            self.state_css.load_from_data(b"#btn_rclone_update { background-image: none; background-color: #c0392b; border-color: #a93226; color: white; } #btn_rclone_update:hover { background-color: #e74c3c; }")
+            self.btn_rclone_update.set_tooltip_text("Rclone Not Found! Click to Install.")
+            self.status_label.set_markup("<span foreground='#e74c3c'><b>Rclone is not installed!</b></span>")
+            self.btn_rclone_update.set_sensitive(True)
+        elif state == "NO_CONFIG":
+            # Config Missing: Orange status text and Web GUI button
+            self.state_css.load_from_data(b"#btn_rclone_gui { background-image: none; background-color: #e67e22; border-color: #d35400; color: white; } #btn_rclone_gui:hover { background-color: #f39c12; }")
+            self.btn_rclone_update.set_tooltip_text("Check and Update Rclone")
+            self.btn_rclone_gui.set_tooltip_text("No remotes configured. Click to open Web GUI.")
+            self.status_label.set_markup("<span foreground='#e67e22'><b>Please configure a remote to begin.</b></span>")
+            self.btn_rclone_update.set_sensitive(True)
         else:
-            subprocess.Popen(['notify-send', 'Update Error', 'No compatible terminal emulator found.', '-i', 'dialog-error'])
+            self.state_css.load_from_data(b"")
+            self.btn_rclone_update.set_tooltip_text("Check and Update Rclone")
+            self.btn_rclone_update.set_sensitive(True)
+
+    def update_rclone_system(self, btn):
+        import threading, subprocess
+        is_install = getattr(self, 'rclone_needs_install', False)
+        cmd = ['pkexec', 'bash', '-c', 'curl https://rclone.org/install.sh | bash'] if is_install else ['pkexec', 'rclone', 'selfupdate']
+        
+        def _updater():
+            try:
+                GLib.idle_add(btn.set_sensitive, False)
+                if is_install:
+                    GLib.idle_add(btn.set_tooltip_text, "Installing Rclone...")
+                else:
+                    GLib.idle_add(btn.set_tooltip_text, "Updating Rclone...")
+                
+                res = subprocess.run(cmd, capture_output=True, text=True)
+                if res.returncode == 0:
+                    if is_install:
+                        subprocess.Popen(['notify-send', 'Rclone Installed', 'Successfully installed Rclone!', '-i', 'software-update-available-symbolic'])
+                    else:
+                        out = (res.stdout + res.stderr).lower()
+                        if "up to date" in out or "already up to date" in out:
+                            subprocess.Popen(['notify-send', 'Rclone', 'Rclone is already up to date.', '-i', 'dialog-information'])
+                        else:
+                            subprocess.Popen(['notify-send', 'Rclone Updated', 'Successfully updated to the latest version!', '-i', 'software-update-available-symbolic'])
+                    GLib.idle_add(self._check_rclone_status)
+                else:
+                    if "dismissed" not in res.stderr.lower() and "polkit" not in res.stderr.lower():
+                        subprocess.Popen(['notify-send', 'Error', res.stderr.strip() or 'An unknown error occurred.', '-i', 'dialog-error'])
+            except Exception as e:
+                subprocess.Popen(['notify-send', 'Error', str(e), '-i', 'dialog-error'])
+            finally:
+                GLib.idle_add(btn.set_sensitive, True)
+                GLib.idle_add(btn.set_tooltip_text, "Rclone Not Found! Click to Install." if is_install else "Check and Update Rclone")
+                
+        threading.Thread(target=_updater, daemon=True).start()
 
 
     # --- DYNAMIC CONFIGURATION PORTAL MODE ---
@@ -472,22 +549,30 @@ class InventoryWorkbench:
             if hasattr(self, 'red_btn_css'):
                 self.btn_rclone_gui.get_style_context().remove_provider(self.red_btn_css)
             
-            # Restore global tools that were locked during the portal session
-            self.btn_sync.set_sensitive(True)
-            self.btn_trash.set_sensitive(True)
+            self._check_rclone_status() # Let the state machine unlock the UI safely
             self.btn_info.set_sensitive(True)
-            
-            self.profile_combo.set_sensitive(True)
-            self.path_entry.set_sensitive(True)
-            self.main_stack.set_sensitive(True)
             self.builder.get_object("btn_reset").set_sensitive(True)
             if undo := self.builder.get_object("btn_undo"): undo.set_sensitive(True)
             
             self.app.rc.read(RCLONE_CONF_PATH)
             valid_remotes = self.app.rc.sections()
             config_manager.prune_orphaned_remotes(valid_remotes)
+            
+            self.profile_combo.remove_all()
             for r in valid_remotes:
                 config_manager.ensure_profile_exists(r)
+                if r not in self.app.threads:
+                    from app import SyncThread
+                    self.global_cfg = config_manager.load_config(force_reload=True)
+                    t = SyncThread(r, self.global_cfg.get('local_paths', {}).get(r, f"/mnt/DataDrive/{r}"), self.app)
+                    self.app.threads[r] = t
+                    t.start()
+                self.profile_combo.append_text(r)
+                
+            self.app.update_menu()
+            
+            if valid_remotes:
+                self.profile_combo.set_active(0)
                 
             self.global_cfg = config_manager.load_config(force_reload=True)
             self.load_data()
