@@ -17,6 +17,10 @@ The Workbench operates as a multi-layered ecosystem where data, logic, and execu
 * **`workbench_ui.py`** (*The Global Controller*): The lightweight main window controller. It loads the base Glade file, manages the Global Command Center (Sync/Stop/Update), and securely links the UI sub-components together.
 * **`app.py`** (*The System Tray Controller*): Subscribes to engine callbacks and renders status emojis.
 * **`pyside_app.py`** (*The Minimal Qt Front End*): Demonstrates a GTK-free PySide6 window and system tray that consume `RcloneEngine` state and log callbacks.
+* **`src/style.qss`** (*Qt Presentation*): Stores the workbench QSS stylesheet.
+* **`src/qt_tray.py`** (*Qt Tray Controller*): Builds the per-profile `QSystemTrayIcon` menu and activation behavior.
+* **`src/qt_live_output.py`** (*Qt Live Outputs*): Owns the bounded telemetry editor and log toolbar.
+* **`src/qt_workbench_ui.py`** (*Qt Workbench Page*): Owns profile selection, drag-and-drop paths, Smart Automations, and profile actions.
 
 ---
 
