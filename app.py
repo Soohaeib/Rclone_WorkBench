@@ -13,8 +13,10 @@ gi.require_version("AyatanaAppIndicator3", "0.1")
 gi.require_version("Notify", "0.7")
 from gi.repository import AyatanaAppIndicator3 as AppIndicator3, Gtk, Notify, GLib
 
-from engine import RcloneEngine
-from src import config_manager, log_formatter, workbench_blueprint, workbench_ui
+from shared.engine import RcloneEngine
+from shared import config_manager, workbench_blueprint
+from shared import log_formatter
+from gtk_app import workbench_ui
 
 
 Notify.init("RClone Workbench")
@@ -94,8 +96,29 @@ class RCloneWorkbenchApp:
 
     def update_menu(self):
         menu = Gtk.Menu()
+
+        def create_icon_item(icon_name, text):
+            item = Gtk.MenuItem()
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            row.pack_start(
+                Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU),
+                False,
+                False,
+                0,
+            )
+            row.pack_start(Gtk.Label(label=text, xalign=0), True, True, 0)
+            row.show_all()
+            item.add(row)
+            return item
+
         for profile, engine in self.threads.items():
-            icon = "🔵" if engine.run_state else "🔴" if engine.err else "🟡" if engine.cancelled else "🟢"
+            icon = (
+                "🔵" if engine.run_state
+                else "🔴" if engine.err
+                else "🟡" if engine.cancelled
+                else "⚪" if engine.last == "Never"
+                else "🟢"
+            )
             item = Gtk.MenuItem(label=f"{icon} {profile:<12}")
             submenu = Gtk.Menu()
             stop_label = "Destroy Process" if engine.kill_clicks else "Abandon Process"
@@ -110,20 +133,34 @@ class RCloneWorkbenchApp:
             live = Gtk.MenuItem(label="Live Output")
             live.connect("activate", lambda _, p=profile: self.show_live_output(p))
             submenu.append(live)
+            submenu.append(Gtk.SeparatorMenuItem())
+
             cfg = config_manager.load_config()
             profile_cfg = cfg.get("remote_configs", {}).get(profile, {})
             local_path = cfg.get("local_paths", {}).get(profile, "")
             trash_name = profile_cfg.get("--backup-dir1", workbench_blueprint.TRASH_LOCAL_NAME)
             trash_path = trash_name if os.path.isabs(trash_name) else os.path.join(local_path, trash_name)
-            trash = Gtk.MenuItem(label="Open Local Trash")
+            trash = create_icon_item("user-trash-symbolic", "Open Local Trash")
             trash.set_sensitive(os.path.exists(trash_path))
             trash.connect("activate", lambda _, path=trash_path: subprocess.Popen(["xdg-open", path]))
             submenu.append(trash)
-            status = "Syncing..." if engine.run_state else "ERROR" if engine.err else "Cancelled" if engine.cancelled else "Ready"
-            status_item = Gtk.MenuItem(label=f"Status: {status}")
+            if engine.run_state:
+                status_icon, status = "view-refresh-symbolic", "Syncing..."
+            elif engine.err:
+                status_icon, status = "dialog-error-symbolic", "ERROR"
+            elif engine.cancelled:
+                status_icon, status = "process-stop-symbolic", "Cancelled"
+            elif engine.last == "Never":
+                status_icon, status = "media-playback-start-symbolic", "Never Run"
+            else:
+                status_icon, status = "emblem-synchronizing-symbolic", "Ready"
+            status_item = create_icon_item(status_icon, f"Status: {status}")
             status_item.set_sensitive(False)
             submenu.append(status_item)
-            last = Gtk.MenuItem(label=f"Last Run: {self._relative_time(engine.last)}")
+            last = create_icon_item(
+                "document-open-recent-symbolic",
+                f"Last Run: {self._relative_time(engine.last)}",
+            )
             last.set_sensitive(False)
             submenu.append(last)
             item.set_submenu(submenu)

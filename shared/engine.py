@@ -9,7 +9,7 @@ import subprocess
 import threading
 from typing import Callable, Optional
 
-from src import config_manager, rules_engine, smart_engine, workbench_blueprint
+from . import config_manager, rules_engine, smart_engine, workbench_blueprint
 
 
 StateCallback = Callable[["RcloneEngine", str], None]
@@ -41,7 +41,7 @@ class RcloneEngine:
         self.run_state = False
         self.proc = None
         self.kill_clicks = 0
-        from src import log_formatter
+        from . import log_formatter
         self.last = log_formatter.get_last_run_time(profile)
         status = self._last_status()
         self.err = status == "Failed"
@@ -78,7 +78,7 @@ class RcloneEngine:
             self.state_callback(self, state)
 
     def _last_status(self):
-        from src import log_formatter
+        from . import log_formatter
         return log_formatter.get_last_run_status(self.profile)
 
     def _run_loop(self):

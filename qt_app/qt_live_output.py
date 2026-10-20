@@ -6,7 +6,7 @@ from PySide6.QtCore import QRegularExpression, QUrl, Qt
 from PySide6.QtGui import QDesktopServices, QFont, QSyntaxHighlighter, QTextCharFormat, QIcon, QColor
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPlainTextEdit, QToolButton, QVBoxLayout, QWidget
 
-from src import workbench_blueprint
+from shared import workbench_blueprint
 
 
 class LogHighlighter(QSyntaxHighlighter):
@@ -41,6 +41,10 @@ class LiveOutputPage(QWidget):
         self.auto_scroll = QCheckBox("Auto-scroll")
         self.auto_scroll.setChecked(True)
         self.auto_scroll.setCursor(Qt.PointingHandCursor)
+        self.wrap_lines = QCheckBox("Wrap lines")
+        self.wrap_lines.setChecked(True)
+        self.wrap_lines.setCursor(Qt.PointingHandCursor)
+        self.wrap_lines.toggled.connect(self._set_wrap_mode)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 8, 16, 16)
@@ -50,6 +54,7 @@ class LiveOutputPage(QWidget):
         toolbar.addWidget(QLabel("Live Output"))
         toolbar.addStretch()
         toolbar.addWidget(self.auto_scroll)
+        toolbar.addWidget(self.wrap_lines)
         toolbar.addWidget(self._button("Clear", self.log_view.clear))
         toolbar.addWidget(self._button("Reload", self.reload_current))
         toolbar.addWidget(self._button("Delete", self.delete_current))
@@ -57,6 +62,14 @@ class LiveOutputPage(QWidget):
         layout.addLayout(toolbar)
         layout.addWidget(self.log_view, 1)
         self.profile = ""
+
+    def _set_wrap_mode(self, enabled):
+        mode = (
+            QPlainTextEdit.WidgetWidth
+            if enabled
+            else QPlainTextEdit.NoWrap
+        )
+        self.log_view.setLineWrapMode(mode)
 
     def _button(self, text, callback):
         button = QToolButton(text=text)

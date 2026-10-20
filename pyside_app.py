@@ -1,21 +1,23 @@
 """PySide6 entry point for the Rclone Workbench."""
 
 import os
+import shutil
+import subprocess
 import sys
 
-from PySide6.QtCore import QObject, Qt, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QIcon
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QMainWindow, QPushButton, QStackedWidget, QToolButton, QVBoxLayout, QWidget
 
-from engine import RcloneEngine
-from src import config_manager
-from src.qt_live_output import LiveOutputPage
-from src.qt_tray import TrayController
-from src.qt_workbench_ui import WorkbenchPage
+from shared.engine import RcloneEngine
+from shared import config_manager
+from qt_app.qt_live_output import LiveOutputPage
+from qt_app.qt_tray import TrayController
+from qt_app.qt_workbench_ui import WorkbenchPage
 
 
 def load_stylesheet():
-    stylesheet_path = os.path.join(os.path.dirname(__file__), "src", "style.qss")
+    stylesheet_path = os.path.join(os.path.dirname(__file__), "qt_app", "style.qss")
     with open(stylesheet_path, encoding="utf-8") as stylesheet:
         return stylesheet.read()
 
@@ -70,6 +72,7 @@ class MainWindow(QMainWindow):
         )
         if self.workbench.profile_combo.count():
             self._switch_profile(self.workbench.profile_combo.currentText())
+        QTimer.singleShot(0, self._check_system_state)
 
     def _build_header(self):
         header = QFrame()
@@ -85,19 +88,21 @@ class MainWindow(QMainWindow):
     def _build_left_bar(self):
         layout = QHBoxLayout()
         layout.setSpacing(6)
-        info = QToolButton(text="ⓘ")
-        info.setIcon(QIcon.fromTheme("dialog-information"))
+        info = QToolButton()
+        info.setIcon(QIcon.fromTheme("dialog-information-symbolic"))
         info.setCursor(Qt.PointingHandCursor)
         info.setToolTip("Operating Environment Info")
         info.clicked.connect(self._show_environment_info)
-        update = QToolButton(text="Update")
-        update.setIcon(QIcon.fromTheme("software-update-available"))
+        update = QToolButton()
+        update.setIcon(QIcon.fromTheme("software-update-available-symbolic"))
         update.setCursor(Qt.PointingHandCursor)
         update.setToolTip("Update Rclone System-Wide")
-        gui = QToolButton(text="Web GUI")
-        gui.setIcon(QIcon.fromTheme("web-browser"))
+        update.clicked.connect(self._update_rclone)
+        gui = QToolButton()
+        gui.setIcon(QIcon.fromTheme("web-browser-symbolic"))
         gui.setCursor(Qt.PointingHandCursor)
         gui.setToolTip("Launch official Rclone Web Configurator")
+        gui.clicked.connect(self._toggle_rclone_gui)
         layout.addWidget(info)
         layout.addWidget(update)
         layout.addWidget(gui)
@@ -124,21 +129,21 @@ class MainWindow(QMainWindow):
     def _build_command_bar(self):
         layout = QHBoxLayout()
         layout.setSpacing(6)
-        self.btn_sync = QPushButton("▶")
-        self.btn_sync.setIcon(QIcon.fromTheme("media-playback-start"))
+        self.btn_sync = QPushButton()
+        self.btn_sync.setIcon(QIcon.fromTheme("media-playback-start-symbolic"))
         self.btn_sync.setCursor(Qt.PointingHandCursor)
         self.btn_sync.setObjectName("btn_sync")
         self.btn_sync.setToolTip("Start Active Profile Sync Session")
         self.btn_sync.clicked.connect(self._start_sync)
-        self.btn_stop = QPushButton("■")
-        self.btn_stop.setIcon(QIcon.fromTheme("process-stop"))
+        self.btn_stop = QPushButton()
+        self.btn_stop.setIcon(QIcon.fromTheme("process-stop-symbolic"))
         self.btn_stop.setCursor(Qt.PointingHandCursor)
         self.btn_stop.setObjectName("btn_stop")
         self.btn_stop.setToolTip("Stop Active Sync Session")
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self._stop_sync)
-        self.btn_trash = QToolButton(text="♻")
-        self.btn_trash.setIcon(QIcon.fromTheme("user-trash"))
+        self.btn_trash = QToolButton()
+        self.btn_trash.setIcon(QIcon.fromTheme("user-trash-symbolic"))
         self.btn_trash.setCursor(Qt.PointingHandCursor)
         self.btn_trash.setObjectName("btn_trash")
         self.btn_trash.setEnabled(False)
@@ -162,6 +167,48 @@ class MainWindow(QMainWindow):
         self.live_output.set_profile(profile)
         self._update_controls(self._engine_state(self._engines[profile]))
         self.tray.refresh()
+
+    def _update_rclone(self):
+        self.statusBar().showMessage("Updating Rclone...", 5000)
+        command = ["pkexec", "rclone", "selfupdate"]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False)
+        except OSError as exc:
+            self.statusBar().showMessage(f"Rclone update failed: {exc}", 5000)
+            return
+        if result.returncode:
+            self.statusBar().showMessage(
+                result.stderr.strip() or "Rclone update failed.", 5000
+            )
+        else:
+            self.statusBar().showMessage("Rclone update completed.", 5000)
+            self._check_system_state()
+
+    def _check_system_state(self):
+        if not shutil.which("rclone"):
+            self.btn_sync.setEnabled(False)
+            self.workbench.set_status("Rclone is not installed")
+            return
+        if not self._engines:
+            self.btn_sync.setEnabled(False)
+            self.workbench.set_status("Please configure a remote")
+            return
+        self.btn_sync.setEnabled(True)
+
+    def _toggle_rclone_gui(self):
+        process = getattr(self, "_rclone_gui_process", None)
+        if process and process.poll() is None:
+            process.terminate()
+            self._rclone_gui_process = None
+            return
+        try:
+            self._rclone_gui_process = subprocess.Popen(
+                ["rclone", "gui"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            self.statusBar().showMessage(f"Unable to launch Rclone GUI: {exc}", 5000)
 
     def _current_engine(self):
         return self._engines.get(self.workbench.profile_combo.currentText())

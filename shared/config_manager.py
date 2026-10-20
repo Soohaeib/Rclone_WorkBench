@@ -1,0 +1,79 @@
+import os, json
+from .workbench_blueprint import APP_DIR, JSON_CONFIG_FILE, CONFIG_SCHEMA
+
+_config_cache = None
+
+def load_config(force_reload=False):
+    global _config_cache
+    if _config_cache is None or force_reload:
+        try:
+            with open(JSON_CONFIG_FILE, 'r') as f: 
+                _config_cache = json.load(f)
+        except: 
+            _config_cache = {"local_paths": {}, "remote_configs": {}}
+    return _config_cache
+
+def save_config(cfg):
+    global _config_cache
+    _config_cache = cfg
+
+    os.makedirs(APP_DIR, exist_ok=True)
+    with open(JSON_CONFIG_FILE, 'w') as f: json.dump(cfg, f, indent=4)
+
+def ensure_profile_exists(profile):
+    cfg = load_config()
+    if profile not in cfg.setdefault('remote_configs', {}):
+        cfg['remote_configs'][profile] = {getattr(i, 'flag', ''): getattr(i, 'default', "") if i.type != 'check' else False for sec in CONFIG_SCHEMA.values() for i in sec}
+        save_config(cfg)
+    return cfg
+
+def prune_orphaned_remotes(active_remotes):
+    """Garbage collects old profiles from bisync_settings.json if deleted from rclone.conf."""
+    cfg = load_config()
+    changed = False
+    
+    for section in ['local_paths', 'remote_configs', 'filter_hashes']:
+        if section in cfg:
+            # Find keys in the JSON that do NOT exist in rclone.conf
+            stale_keys = [k for k in cfg[section].keys() if k not in active_remotes]
+            for k in stale_keys:
+                del cfg[section][k]
+                changed = True
+                
+    if changed:
+        save_config(cfg)
+
+def build_base_args(profile, global_cfg, inferred_locks):
+    cfg = global_cfg.get('remote_configs', {}).get(profile, {})
+    args, state = [], {**cfg, **inferred_locks}
+
+    for section in CONFIG_SCHEMA.values():
+        for item in section:
+            flag = getattr(item, 'flag', None)
+            if not flag: continue
+            
+            cmd_flag = getattr(item, 'short', None) or flag
+            
+            for k in [x for x in state if (x.split('.')[0] if '.' in x else x) == flag]:
+                val = state.get(k)
+                if not val and val != 0: continue
+                
+                t = getattr(item, 'type', None)
+                
+                if t == 'check' and val is True: 
+                    args.append(cmd_flag)
+                elif t == 'multi' and (c := ",".join(p.strip() for p in str(val).split(',') if p.strip())): 
+                    args += [cmd_flag, c]
+                elif t == 'combo' and str(val).strip(): 
+                    args += [cmd_flag, str(val).strip()]
+                elif t == 'text': 
+                    args += [x for line in str(val).splitlines() if line.strip() for x in (cmd_flag, line.strip())]
+                elif t == 'entry' and str(val).strip():
+                    args += [cmd_flag, str(val).strip()]
+                elif t == 'number' and int(val) > 0: 
+                    unit = getattr(item, 'unit', '')
+                    args += [cmd_flag, f"{val}{unit}"]
+                elif t == 'count' and int(val) > 0:
+                    args.extend([cmd_flag] * int(val))
+                    
+    return args

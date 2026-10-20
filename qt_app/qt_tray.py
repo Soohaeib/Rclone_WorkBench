@@ -7,7 +7,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from src import config_manager, workbench_blueprint
+from shared import config_manager, workbench_blueprint
 
 
 class TrayController:
@@ -47,6 +47,11 @@ class TrayController:
         except (TypeError, ValueError):
             return "Unknown"
 
+    @staticmethod
+    def _icon_action(icon_name, text, parent):
+        action = QAction(QIcon.fromTheme(icon_name), text, parent)
+        return action
+
     def refresh(self):
         menu = QMenu(self.parent)
         cfg = config_manager.load_config()
@@ -70,25 +75,42 @@ class TrayController:
             path = cfg.get("local_paths", {}).get(profile, "")
             backup = values.get("--backup-dir1", workbench_blueprint.TRASH_LOCAL_NAME)
             trash = backup if os.path.isabs(str(backup)) else os.path.join(path, str(backup))
-            trash_action = QAction("Open Local Trash", submenu)
+            trash_action = self._icon_action(
+                "user-trash-symbolic", "Open Local Trash", submenu
+            )
             trash_action.setEnabled(os.path.isdir(trash))
             trash_action.triggered.connect(lambda _=False, target=trash: QDesktopServices.openUrl(QUrl.fromLocalFile(target)))
             submenu.addAction(trash_action)
-            status = "Syncing..." if engine.run_state else "ERROR" if engine.err else "Cancelled" if engine.cancelled else "Never Run" if engine.last == "Never" else "Ready"
-            status_action = QAction(f"Status: {status}", submenu)
+            if engine.run_state:
+                status_icon, status = "view-refresh-symbolic", "Syncing..."
+            elif engine.err:
+                status_icon, status = "dialog-error-symbolic", "ERROR"
+            elif engine.cancelled:
+                status_icon, status = "process-stop-symbolic", "Cancelled"
+            elif engine.last == "Never":
+                status_icon, status = "media-playback-start-symbolic", "Never Run"
+            else:
+                status_icon, status = "emblem-synchronizing-symbolic", "Ready"
+            status_action = self._icon_action(
+                status_icon, f"Status: {status}", submenu
+            )
             status_action.setEnabled(False)
             submenu.addAction(status_action)
-            last = QAction(f"Last Run: {self._relative(engine.last)}", submenu)
+            last = self._icon_action(
+                "document-open-recent-symbolic",
+                f"Last Run: {self._relative(engine.last)}",
+                submenu,
+            )
             last.setEnabled(False)
             submenu.addAction(last)
             action.setMenu(submenu)
             menu.addAction(action)
         menu.addSeparator()
-        workbench = QAction("Open Workbench", menu)
+        workbench = QAction("Inventory Workbench", menu)
         workbench.triggered.connect(self.open_workbench)
         menu.addAction(workbench)
         menu.addSeparator()
-        quit_action = QAction("Quit", menu)
+        quit_action = QAction("Quit Application", menu)
         quit_action.triggered.connect(QApplication.instance().quit)
         menu.addAction(quit_action)
         self.tray.setContextMenu(menu)

@@ -6,7 +6,7 @@ from PySide6.QtCore import QPropertyAnimation, QEasingCurve, Qt, Signal
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QPlainTextEdit, QScrollArea, QToolButton, QVBoxLayout, QWidget
 
-from src import config_manager, rules_engine, workbench_blueprint
+from shared import config_manager, rules_engine, workbench_blueprint
 
 
 class DropPathEdit(QLineEdit):
@@ -89,29 +89,34 @@ class WorkbenchPage(QWidget):
         controls = QHBoxLayout()
         controls.setSpacing(12)
         toggle_smart = QToolButton(
-            icon=QIcon.fromTheme("sidebar-show"), text="Smart Automations",
-            checkable=True, checked=True
+            icon=QIcon.fromTheme("sidebar-show-symbolic"),
+            checkable=True,
+            checked=True,
         )
         toggle_smart.setCursor(Qt.PointingHandCursor)
+        toggle_smart.setToolTip("Toggle Smart Presets")
         smart_scroll = self._build_automations()
         smart_section = AnimatedSection(smart_scroll)
         toggle_smart.toggled.connect(smart_section.set_expanded)
         controls.addWidget(toggle_smart)
         controls.addWidget(self.profile_combo, 1)
         controls.addWidget(self.path_entry, 2)
-        browse = QToolButton(text="Browse")
-        browse.setIcon(QIcon.fromTheme("folder-open"))
+        browse = QToolButton()
+        browse.setIcon(QIcon.fromTheme("folder-open-symbolic"))
         browse.setCursor(Qt.PointingHandCursor)
+        browse.setToolTip("Browse Local Path")
         browse.clicked.connect(self._browse_path)
         controls.addWidget(browse)
         layout.addLayout(controls)
         layout.addWidget(smart_section)
 
         preview_toggle = QToolButton(
-            icon=QIcon.fromTheme("task-due"), text="Live Command Preview",
-            checkable=True, checked=True
+            icon=QIcon.fromTheme("utilities-terminal-symbolic"),
+            checkable=True,
+            checked=True,
         )
         preview_toggle.setCursor(Qt.PointingHandCursor)
+        preview_toggle.setToolTip("Toggle Command Preview")
         preview = QPlainTextEdit(readOnly=True)
         preview.setFont(QFont("monospace", 10))
         preview.setMinimumHeight(100)
@@ -125,17 +130,20 @@ class WorkbenchPage(QWidget):
 
         footer = QHBoxLayout()
         footer.setSpacing(12)
-        undo = QToolButton(text="Undo")
-        undo.setIcon(QIcon.fromTheme("edit-undo"))
+        undo = QToolButton()
+        undo.setIcon(QIcon.fromTheme("edit-undo-symbolic"))
         undo.setCursor(Qt.PointingHandCursor)
+        undo.setToolTip("Undo Unsaved Changes")
         undo.clicked.connect(lambda: self.profile_changed.emit(self.profile_combo.currentText()))
-        reset = QToolButton(text="Reset")
-        reset.setIcon(QIcon.fromTheme("view-refresh"))
+        reset = QToolButton()
+        reset.setIcon(QIcon.fromTheme("view-refresh-symbolic"))
         reset.setCursor(Qt.PointingHandCursor)
+        reset.setToolTip("Reset Options")
         reset.clicked.connect(self.reset_requested)
-        apply_button = QPushButton("Apply")
-        apply_button.setIcon(QIcon.fromTheme("document-save"))
+        apply_button = QPushButton()
+        apply_button.setIcon(QIcon.fromTheme("document-save-symbolic"))
         apply_button.setCursor(Qt.PointingHandCursor)
+        apply_button.setToolTip("Apply to Profile")
         apply_button.setObjectName("btn_apply")
         apply_button.clicked.connect(self.apply_requested)
         footer.addWidget(undo)

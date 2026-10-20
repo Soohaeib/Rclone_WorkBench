@@ -3,10 +3,10 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 from urllib.parse import unquote
 
-from src import config_manager, smart_engine, widget_factory
-from engine import RcloneEngine
-from src.workbench_blueprint import TRASH_LOCAL_NAME, RCLONE_CONF_PATH
-from src import ui_live_output, ui_inventory
+from shared import config_manager, smart_engine
+from shared.engine import RcloneEngine
+from shared.workbench_blueprint import TRASH_LOCAL_NAME, RCLONE_CONF_PATH
+from gtk_app import widget_factory, ui_live_output, ui_inventory
 
 class InventoryWorkbench:
     def __init__(self, app):

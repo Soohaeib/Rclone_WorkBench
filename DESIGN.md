@@ -1,26 +1,18 @@
 # System Architecture & Design
 
+The GTK application remains the primary implementation in `app.py`. The Qt
+frontend is an additive alternative launched through `pyside_app.py`; neither
+frontend replaces or imports the other.
+
 The Workbench operates as a multi-layered ecosystem where data, logic, and execution are strictly decoupled. This allows developers to easily add new rclone flags without ever touching the UI code.
 
 ## Core Modules
 
-* **`workbench_blueprint.py`** (*The Data Authority*): Defines the `SMART_SCHEMA` (Procedures) and divides the tools into `BISYNC_SCHEMA` and `GLOBAL_SCHEMA`. This file is the absolute source of truth for all configuration schemas.
-* **`rules_engine.py`** (*The Logic Processor*): A recursive engine that evaluates card relationships (`expects`, `rejects`, `satisfy`) to ensure a valid command-line state and enforces strict mathematical boundaries.
-* **`smart_engine.py`** (*The Audit Library*): Houses reusable safety checks and hardware-bound calculations used by the execution layer.
-* **`config_manager.py`** (*The Persistence Layer*): Handles saving/loading, dynamically compiles final CLI arguments, and runs **Garbage Collection** (`prune_orphaned_remotes`) to clean up the JSON state when profiles are deleted from `rclone.conf`.
-* **`engine.py`** (*The GTK-free Execution Layer*): `RcloneEngine` owns bisync orchestration, lock/environment/hardware audits, JSONL output, state transitions, and two-stage process supervision. Front ends receive state and log callbacks without importing GTK.
-* **`rclone_runner.py`** (*Compatibility Adapter*): Retains the legacy process-stop entry point while delegating supervision to `RcloneEngine`.
-* **`log_formatter.py`** (*The Parser*): Translates raw rclone JSONL logs into human-readable actions, intelligently parses log severities, and dynamically color-codes the live feed.
-* **`widget_factory.py`** (*The View/Factory*): Instantiates GTK widgets based on Dataclass properties, natively handles DND events, and enforces duplication rules.
-* **`ui_live_output.py`** (*The Log Viewer Component*): Handles GTK Notebook rendering, Pango text-tags, and live terminal output streaming.
-* **`ui_inventory.py`** (*The Workbench Component*): Manages Smart Presets, the active configuration canvas, drag-and-drop mechanics, and compiling the CLI preview.
-* **`workbench_ui.py`** (*The Global Controller*): The lightweight main window controller. It loads the base Glade file, manages the Global Command Center (Sync/Stop/Update), and securely links the UI sub-components together.
-* **`app.py`** (*The System Tray Controller*): Subscribes to engine callbacks and renders status emojis.
-* **`pyside_app.py`** (*The Minimal Qt Front End*): Demonstrates a GTK-free PySide6 window and system tray that consume `RcloneEngine` state and log callbacks.
-* **`src/style.qss`** (*Qt Presentation*): Stores the workbench QSS stylesheet.
-* **`src/qt_tray.py`** (*Qt Tray Controller*): Builds the per-profile `QSystemTrayIcon` menu and activation behavior.
-* **`src/qt_live_output.py`** (*Qt Live Outputs*): Owns the bounded telemetry editor and log toolbar.
-* **`src/qt_workbench_ui.py`** (*Qt Workbench Page*): Owns profile selection, drag-and-drop paths, Smart Automations, and profile actions.
+* **`shared/`** (*Frontend-neutral logic*): Contains the schema, configuration, rules, audits, log parser, process adapter, and `RcloneEngine`. It imports neither GTK nor Qt.
+* **`gtk_app/`** (*GTK Front End*): Contains the original GTK controller, Glade panels, widget factory, and `workbench.glade` asset.
+* **`qt_app/`** (*Qt Front End*): Contains the PySide6 window components, tray controller, and QSS stylesheet.
+* **`app.py`** (*GTK Entry Point*): Loads only `gtk_app` and `shared`.
+* **`pyside_app.py`** (*Qt Entry Point*): Loads only `qt_app` and `shared`.
 
 ---
 

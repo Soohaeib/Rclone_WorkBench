@@ -2,8 +2,9 @@ import os
 import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
-from src import config_manager, rules_engine, smart_engine, widget_factory
-from src.workbench_blueprint import TRASH_LOCAL_NAME, CONFIG_SCHEMA, SMART_SCHEMA
+from shared import config_manager, rules_engine, smart_engine
+from shared.workbench_blueprint import TRASH_LOCAL_NAME, CONFIG_SCHEMA, SMART_SCHEMA
+from gtk_app import widget_factory
 
 class InventoryPanel:
     def __init__(self, ctrl, builder):

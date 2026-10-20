@@ -3,8 +3,8 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Pango", "1.0")
 from gi.repository import Gtk, Gdk, GLib, Pango
 
-from src import log_formatter
-from src.workbench_blueprint import LOG_DIR
+from shared import log_formatter
+from shared.workbench_blueprint import LOG_DIR
 
 class LiveOutputPanel:
     def __init__(self, remotes):
