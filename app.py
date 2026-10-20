@@ -1,251 +1,168 @@
 #usr/bin/env python3
+import configparser
+import datetime
 import os
-os.environ["NO_AT_BRIDGE"] = "1" # Suppress GTK/Nemo DBus accessibility spam
+import signal
+import subprocess
 
-import gi, signal, threading, time, datetime, configparser, subprocess
-gi.require_version('Gtk', '3.0'); gi.require_version('AppIndicator3', '0.1'); gi.require_version('Notify', '0.7')
-from gi.repository import Gtk, GLib, AppIndicator3, Notify
-from src import workbench_blueprint, config_manager, workbench_ui, rclone_runner, log_formatter, rules_engine, smart_engine
+os.environ["NO_AT_BRIDGE"] = "1"
+
+import gi
+gi.require_version("Gtk", "3.0")
+gi.require_version("AyatanaAppIndicator3", "0.1")
+gi.require_version("Notify", "0.7")
+from gi.repository import AyatanaAppIndicator3 as AppIndicator3, Gtk, Notify, GLib
+
+from engine import RcloneEngine
+from src import config_manager, log_formatter, workbench_blueprint, workbench_ui
+
 
 Notify.init("RClone Workbench")
-def notify(title, msg, err=False): Notify.Notification.new(title, msg, "dialog-error" if err else "emblem-synchronizing").show()
 
-class SyncThread(threading.Thread):
-    def __init__(self, profile, path, app):
-        super().__init__(daemon=True)
-        self.profile, self.path, self.app = profile, path, app
-        self.trigger = threading.Event()
-        
-        self.run_state, self.proc = False, None
-        self.kill_clicks = 0
-        
-        self.last = log_formatter.get_last_run_time(profile)
-        status = log_formatter.get_last_run_status(profile)
-        self.err = (status == "Failed")
-        self.cancelled = (status == "Cancelled")
 
-    def trigger_sync(self): self.trigger.set()
+def notify(title, message, err=False):
+    Notify.Notification.new(
+        title, message, "dialog-error" if err else "emblem-synchronizing"
+    ).show()
 
-    def run(self):
-        while True:
-            # Efficiently blocks until set() is called. Safe to hang on exit because thread is daemon=True.
-            self.trigger.wait() 
-            self.trigger.clear()
-            
-            self.run_state, self.err, self.cancelled = True, False, False
-            self.kill_clicks = 0
-            
-            GLib.idle_add(self.app.update_menu)
-            if self.app.workbench: 
-                self.app.workbench.set_status(self.profile, True)
-            
-            cfg = config_manager.load_config()
-            lookup = rules_engine.get_item_lookup()
-            live_state = cfg.get('remote_configs', {}).get(self.profile, {}).copy()
-            local_path = cfg.get('local_paths', {}).get(self.profile, '')
-            remote_path = live_state.get('remote_path', '')
-            
-            live_state = smart_engine.audit_resync_environment(
-                self.profile, local_path, remote_path, live_state
-            )
-            
-            audit_errors =[v for k, v in live_state.items() if k.startswith('_AUDIT_ERROR')]
-            
-            if audit_errors:
-                self.err = True
-                self.run_state = False
-                self.last = "Blocked"
-                error_msg = audit_errors[0]
-                GLib.idle_add(notify, f"Sync Blocked: {self.profile}", error_msg, True)
-                GLib.idle_add(self.app.update_menu)
-                if self.app.workbench: 
-                    self.app.workbench.set_status(self.profile, False)
-                continue 
 
-            if '--backup-dir1' in live_state and hasattr(smart_engine, 'setup_trash_bins'):
-                live_state = smart_engine.setup_trash_bins(self.profile, local_path, remote_path, live_state)
-                
-            flags = config_manager.build_base_args(self.profile, cfg, live_state)
-            
-            remote_full = f"{self.profile}:{remote_path}" if remote_path else f"{self.profile}:"
-            args =["bisync", local_path, remote_full] + flags
-            
-            # Pass a callback to instantly grab the process ID as soon as it starts
-            def _set_proc(p): self.proc = p
-            res = rclone_runner.run_sync_session(self.profile, args, _set_proc)
-
-            self.run_state = False
-            self.proc = None
-            
-            if self.kill_clicks > 0:
-                self.cancelled = True
-                self.err = False
-            else:
-                self.err = not res.get("success", False)
-                self.last = datetime.datetime.now().isoformat()
-            
-            if self.app.workbench:
-                self.app.workbench.set_status(self.profile, False)
-                
-            if not self.err:
-                cfg = config_manager.load_config()
-                p_cfg = cfg.setdefault('remote_configs', {}).setdefault(self.profile, {})
-                
-                import hashlib
-                f_txt = "\n".join([v for k, v in live_state.items() if k.startswith('--filter') and isinstance(v, str)])
-                if 'filter_hashes' not in cfg:
-                    cfg['filter_hashes'] = {}
-                if f_txt:
-                    cfg['filter_hashes'][self.profile] = hashlib.md5(f_txt.encode()).hexdigest()
-                else:
-                    cfg['filter_hashes'].pop(self.profile, None)
-                
-                dropped = False
-                for i in workbench_blueprint.SMART_SCHEMA.get("Smart Automations",[]):
-                    if getattr(i, "lifecycle", "persistent") == "one_time" and p_cfg.get(i.id):
-                        p_cfg.pop(i.id, None)
-                        for k in getattr(i, "satisfy", {}).keys():
-                            p_cfg.pop(k, None)
-                        for k in getattr(i, "expects",[]):
-                            p_cfg.pop(k, None)
-                        dropped = True
-                        
-                if dropped:
-                    active_keys =[k for k, v in p_cfg.items() if v is True or (isinstance(v, str) and v) or (type(v) in [int, float])]
-                    _, merged, _, _ = rules_engine.evaluate_state(active_keys, p_cfg, rules_engine.get_item_lookup())
-                    cfg['remote_configs'][self.profile] = merged
-                    
-                config_manager.save_config(cfg)
-                
-                if self.app.workbench:
-                    GLib.idle_add(self.app.workbench.reload_profile_if_active, self.profile, cfg)
-                    
-            GLib.idle_add(self.app.update_menu)
-            
 class RCloneWorkbenchApp:
     def __init__(self):
         signal.signal(signal.SIGINT, signal.SIG_DFL)
-        self.threads, self.workbench, self.rc = {}, None, configparser.ConfigParser()
-        
+        self.threads, self.workbench = {}, None
+        self.rc = configparser.ConfigParser()
         if os.path.exists(workbench_blueprint.RCLONE_CONF_PATH):
             self.rc.read(workbench_blueprint.RCLONE_CONF_PATH)
 
-        self.ind = AppIndicator3.Indicator.new("rclone_tray", "network-server", AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
+        self.ind = AppIndicator3.Indicator.new(
+            "rclone_tray", "network-server",
+            AppIndicator3.IndicatorCategory.APPLICATION_STATUS,
+        )
         self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
-
-        # --- DYNAMIC GARBAGE COLLECTION ---
-        # Clean up JSON entries that no longer exist in rclone.conf
         valid_remotes = self.rc.sections()
-        if hasattr(config_manager, 'prune_orphaned_remotes'):
-            config_manager.prune_orphaned_remotes(valid_remotes)
-        # ----------------------------------
-
+        config_manager.prune_orphaned_remotes(valid_remotes)
         cfg = config_manager.load_config()
-        for r in valid_remotes:
-            thread = SyncThread(r, cfg.get('local_paths', {}).get(r, f"/mnt/DataDrive/{r}"), self)
-            config_manager.ensure_profile_exists(r); self.threads[r] = thread; thread.start()
+        for profile in valid_remotes:
+            config_manager.ensure_profile_exists(profile)
+            engine = RcloneEngine(
+                profile,
+                cfg.get("local_paths", {}).get(profile, f"/mnt/DataDrive/{profile}"),
+                self._on_engine_state,
+                self._on_engine_log,
+            )
+            self.threads[profile] = engine.start()
         self.update_menu()
 
+    def _on_engine_state(self, engine, state):
+        def update():
+            if state == "blocked":
+                notify(
+                    f"Sync Blocked: {engine.profile}",
+                    engine.last_error or "Bisync safety audit blocked this run.",
+                    True,
+                )
+            if self.workbench:
+                self.workbench.set_status(engine.profile, engine.run_state)
+                if state == "completed":
+                    self.workbench.reload_profile_if_active(
+                        engine.profile, config_manager.load_config(force_reload=True)
+                    )
+            self.update_menu()
+            return False
+        GLib.idle_add(update)
+
+    def _on_engine_log(self, engine, line):
+        # LiveOutputPanel already tails the persisted JSONL file; this callback
+        # remains available to alternate front ends and integrations.
+        return None
+
+    @staticmethod
+    def _relative_time(value):
+        if not value or value == "Never" or value == "Blocked":
+            return value or "Never"
+        try:
+            clean = value.split(".")[0].split("+")[0].split("Z")[0]
+            seconds = (datetime.datetime.now() -
+                       datetime.datetime.strptime(clean, "%Y-%m-%dT%H:%M:%S")).total_seconds()
+            if seconds < 60: return "Just now"
+            if seconds < 3600: return f"{int(seconds // 60)} mins ago"
+            if seconds < 86400: return f"{int(seconds // 3600)} hours ago"
+            if seconds < 172800: return "Yesterday"
+            return f"{int(seconds // 86400)} days ago"
+        except ValueError:
+            return "Unknown"
+
     def update_menu(self):
-        m = Gtk.Menu()
-        
-        def format_relative(iso_str):
-            if not iso_str or iso_str == "Never": return "Never"
-            try:
-                clean_iso = iso_str.split('.')[0].split('+')[0].split('Z')[0]
-                dt = datetime.datetime.strptime(clean_iso, "%Y-%m-%dT%H:%M:%S")
-                secs = (datetime.datetime.now() - dt).total_seconds()
-                
-                if secs < 60: return "Just now"
-                if secs < 3600: return f"{int(secs//60)} mins ago"
-                if secs < 86400: return f"{int(secs//3600)} hours ago"
-                if secs < 172800: return "Yesterday"
-                return f"{int(secs//86400)} days ago"
-            except: 
-                return "Unknown"
+        menu = Gtk.Menu()
+        for profile, engine in self.threads.items():
+            icon = "🔵" if engine.run_state else "🔴" if engine.err else "🟡" if engine.cancelled else "🟢"
+            item = Gtk.MenuItem(label=f"{icon} {profile:<12}")
+            submenu = Gtk.Menu()
+            stop_label = "Destroy Process" if engine.kill_clicks else "Abandon Process"
+            sync = Gtk.MenuItem(label="Sync Now")
+            sync.connect("activate", lambda _, e=engine: e.trigger_sync())
+            sync.set_sensitive(not engine.run_state)
+            submenu.append(sync)
+            stop = Gtk.MenuItem(label=stop_label)
+            stop.connect("activate", lambda _, e=engine: self._stop_engine(e))
+            stop.set_sensitive(engine.run_state)
+            submenu.append(stop)
+            live = Gtk.MenuItem(label="Live Output")
+            live.connect("activate", lambda _, p=profile: self.show_live_output(p))
+            submenu.append(live)
+            cfg = config_manager.load_config()
+            profile_cfg = cfg.get("remote_configs", {}).get(profile, {})
+            local_path = cfg.get("local_paths", {}).get(profile, "")
+            trash_name = profile_cfg.get("--backup-dir1", workbench_blueprint.TRASH_LOCAL_NAME)
+            trash_path = trash_name if os.path.isabs(trash_name) else os.path.join(local_path, trash_name)
+            trash = Gtk.MenuItem(label="Open Local Trash")
+            trash.set_sensitive(os.path.exists(trash_path))
+            trash.connect("activate", lambda _, path=trash_path: subprocess.Popen(["xdg-open", path]))
+            submenu.append(trash)
+            status = "Syncing..." if engine.run_state else "ERROR" if engine.err else "Cancelled" if engine.cancelled else "Ready"
+            status_item = Gtk.MenuItem(label=f"Status: {status}")
+            status_item.set_sensitive(False)
+            submenu.append(status_item)
+            last = Gtk.MenuItem(label=f"Last Run: {self._relative_time(engine.last)}")
+            last.set_sensitive(False)
+            submenu.append(last)
+            item.set_submenu(submenu)
+            menu.append(item)
+        menu.append(Gtk.SeparatorMenuItem())
+        workbench = Gtk.MenuItem(label="Inventory Workbench")
+        workbench.connect("activate", lambda _: self.open_workbench())
+        menu.append(workbench)
+        quit_item = Gtk.MenuItem(label="Quit Application")
+        quit_item.connect("activate", self.on_quit)
+        menu.append(quit_item)
+        menu.show_all()
+        self.ind.set_menu(menu)
 
-        def create_icon_item(icon_name, text):
-            item = Gtk.MenuItem()
-            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            icon = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU)
-            lbl = Gtk.Label(label=text, xalign=0)
-            box.pack_start(icon, False, False, 0)
-            box.pack_start(lbl, True, True, 0)
-            box.show_all() 
-            item.add(box)
-            return item
-
-        cfg = config_manager.load_config()
-
-        for p, t in self.threads.items():
-            state_icon = '🔵' if t.run_state else '🔴' if t.err else '🟡' if getattr(t, 'cancelled', False) else '⚪' if t.last == 'Never' else '🟢'
-            item = Gtk.MenuItem(label=f"{state_icon} {p:<12}")
-            sub = Gtk.Menu()
-            
-            kill_lbl = "Destroy Process" if t.kill_clicks > 0 else "Abandon Process"
-            
-            def handle_kill(_, t_obj=t):
-                rclone_runner.kill_process(t_obj.proc, force=(t_obj.kill_clicks > 0))
-                t_obj.kill_clicks += 1
-                self.update_menu()
-            
-            for lbl, cb, sens in[("Sync Now", lambda _, x=p: self.threads[x].trigger_sync(), not t.run_state),
-                                  (kill_lbl, handle_kill, t.run_state),
-                                  ("Live Output", lambda _, x=p: self.show_live_output(x), True)]:
-                mi = Gtk.MenuItem(label=lbl); mi.connect('activate', cb); mi.set_sensitive(sens); sub.append(mi)
-            sub.append(Gtk.SeparatorMenuItem())
-            
-            p_cfg = cfg.get('remote_configs', {}).get(p, {})
-            l_path = cfg.get('local_paths', {}).get(p, "")
-            t_name = p_cfg.get('--backup-dir1', workbench_blueprint.TRASH_LOCAL_NAME)
-            trash_path = t_name if os.path.isabs(t_name) else os.path.join(l_path, t_name)
-            
-            i_trash = create_icon_item("user-trash-symbolic", "Open Local Trash")
-            if os.path.exists(trash_path):
-                i_trash.connect("activate", lambda _, path=trash_path: subprocess.Popen(['xdg-open', path]))
-                i_trash.set_sensitive(True)
-            else:
-                i_trash.set_sensitive(False) 
-            sub.append(i_trash)
-            
-            if t.run_state:
-                s_icon, s_text = "view-refresh-symbolic", "Syncing..."
-            elif t.err:
-                s_icon, s_text = "dialog-error-symbolic", "ERROR"
-            elif getattr(t, 'cancelled', False):
-                s_icon, s_text = "process-stop-symbolic", "Cancelled"
-            elif t.last == 'Never':
-                s_icon, s_text = "media-playback-start-symbolic", "Never Run"
-            else:
-                s_icon, s_text = "emblem-synchronizing-symbolic", "Ready"
-                
-            i_status = create_icon_item(s_icon, f"Status: {s_text}")
-            i_status.set_sensitive(False)
-            sub.append(i_status)
-            
-            i_last = create_icon_item("document-open-recent-symbolic", f"Last Run: {format_relative(t.last)}")
-            i_last.set_sensitive(False)
-            sub.append(i_last)
-            
-            item.set_submenu(sub); m.append(item)
-            
-        m.append(Gtk.SeparatorMenuItem())
-        for lbl, cb in[("Inventory Workbench", lambda _: self.open_workbench()), ("Quit Application", self.on_quit)]:
-            mi = Gtk.MenuItem(label=lbl); mi.get_style_context().add_class("menu-action"); mi.connect('activate', cb); m.append(mi)
-        m.show_all(); self.ind.set_menu(m)
+    def _stop_engine(self, engine):
+        engine.stop_process(force=bool(engine.kill_clicks))
+        engine.kill_clicks += 1
+        self.update_menu()
 
     def open_workbench(self):
-        # CHANGED: Now passing 'self' instead of a list of remotes
-        if not self.workbench: self.workbench = workbench_ui.InventoryWorkbench(self)
-        if hasattr(self.workbench, 'focus_workbench'): self.workbench.focus_workbench()
-        self.workbench.show_all(); self.workbench.present(); return self.workbench
+        if not self.workbench:
+            self.workbench = workbench_ui.InventoryWorkbench(self)
+        self.workbench.focus_workbench()
+        self.workbench.show_all()
+        self.workbench.present()
+        return self.workbench
 
     def show_live_output(self, profile):
-        if hasattr(wb := self.open_workbench(), 'focus_profile'): wb.focus_profile(profile)
+        self.open_workbench().focus_profile(profile)
 
     def on_quit(self, _):
-        [rclone_runner.kill_process(t.proc, force=True) for t in self.threads.values() if t.proc]
-        if self.workbench:[log_formatter.stop_live_feed(p) for p in self.threads]
+        for engine in self.threads.values():
+            engine.stop(force=True)
+        if self.workbench:
+            for profile in self.threads:
+                log_formatter.stop_live_feed(profile)
         Gtk.main_quit()
 
-if __name__ == "__main__": RCloneWorkbenchApp(); Gtk.main()
+
+if __name__ == "__main__":
+    RCloneWorkbenchApp()
+    Gtk.main()

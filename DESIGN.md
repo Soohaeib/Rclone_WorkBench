@@ -6,15 +6,17 @@ The Workbench operates as a multi-layered ecosystem where data, logic, and execu
 
 * **`workbench_blueprint.py`** (*The Data Authority*): Defines the `SMART_SCHEMA` (Procedures) and divides the tools into `BISYNC_SCHEMA` and `GLOBAL_SCHEMA`. This file is the absolute source of truth for all configuration schemas.
 * **`rules_engine.py`** (*The Logic Processor*): A recursive engine that evaluates card relationships (`expects`, `rejects`, `satisfy`) to ensure a valid command-line state and enforces strict mathematical boundaries.
-* **`smart_engine.py`** (*The Orchestrator & Hardware Scanner*): Houses custom Python Hooks for background environmental audits. It polls host OS hardware limits (RAM/CPU) to calculate dynamic safety buffers.
+* **`smart_engine.py`** (*The Audit Library*): Houses reusable safety checks and hardware-bound calculations used by the execution layer.
 * **`config_manager.py`** (*The Persistence Layer*): Handles saving/loading, dynamically compiles final CLI arguments, and runs **Garbage Collection** (`prune_orphaned_remotes`) to clean up the JSON state when profiles are deleted from `rclone.conf`.
-* **`rclone_runner.py`** (*The Backend Executor*): Manages subprocess calls and non-blocking JSONL log piping. Supports strict Two-Stage Process Termination (SIGINT gracefully, escalating to SIGKILL).
+* **`engine.py`** (*The GTK-free Execution Layer*): `RcloneEngine` owns bisync orchestration, lock/environment/hardware audits, JSONL output, state transitions, and two-stage process supervision. Front ends receive state and log callbacks without importing GTK.
+* **`rclone_runner.py`** (*Compatibility Adapter*): Retains the legacy process-stop entry point while delegating supervision to `RcloneEngine`.
 * **`log_formatter.py`** (*The Parser*): Translates raw rclone JSONL logs into human-readable actions, intelligently parses log severities, and dynamically color-codes the live feed.
 * **`widget_factory.py`** (*The View/Factory*): Instantiates GTK widgets based on Dataclass properties, natively handles DND events, and enforces duplication rules.
 * **`ui_live_output.py`** (*The Log Viewer Component*): Handles GTK Notebook rendering, Pango text-tags, and live terminal output streaming.
 * **`ui_inventory.py`** (*The Workbench Component*): Manages Smart Presets, the active configuration canvas, drag-and-drop mechanics, and compiling the CLI preview.
 * **`workbench_ui.py`** (*The Global Controller*): The lightweight main window controller. It loads the base Glade file, manages the Global Command Center (Sync/Stop/Update), and securely links the UI sub-components together.
-* **`app.py`** (*The System Tray Controller*): Manages background daemon threads and status emojis.
+* **`app.py`** (*The System Tray Controller*): Subscribes to engine callbacks and renders status emojis.
+* **`pyside_app.py`** (*The Minimal Qt Front End*): Demonstrates a GTK-free PySide6 window and system tray that consume `RcloneEngine` state and log callbacks.
 
 ---
 

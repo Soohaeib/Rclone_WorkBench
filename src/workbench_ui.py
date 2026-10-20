@@ -3,7 +3,8 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 from urllib.parse import unquote
 
-from src import config_manager, rclone_runner, smart_engine, widget_factory
+from src import config_manager, smart_engine, widget_factory
+from engine import RcloneEngine
 from src.workbench_blueprint import TRASH_LOCAL_NAME, RCLONE_CONF_PATH
 from src import ui_live_output, ui_inventory
 
@@ -162,7 +163,7 @@ class InventoryWorkbench:
         if (p := self.profile_combo.get_active_text()) and p in self.app.threads:
             t = self.app.threads[p]
             # First click = Graceful SIGINT. Second click = Forceful SIGKILL.
-            rclone_runner.kill_process(t.proc, force=(t.kill_clicks > 0))
+            t.stop_process(force=(t.kill_clicks > 0))
             t.kill_clicks += 1
             
             # Update the UI button tooltip to warn the user that the next click is forceful
@@ -318,11 +319,14 @@ class InventoryWorkbench:
             for r in valid_remotes:
                 config_manager.ensure_profile_exists(r)
                 if r not in self.app.threads:
-                    from app import SyncThread
                     self.global_cfg = config_manager.load_config(force_reload=True)
-                    t = SyncThread(r, self.global_cfg.get('local_paths', {}).get(r, f"/mnt/DataDrive/{r}"), self.app)
-                    self.app.threads[r] = t
-                    t.start()
+                    t = RcloneEngine(
+                        r,
+                        self.global_cfg.get('local_paths', {}).get(r, f"/mnt/DataDrive/{r}"),
+                        self.app._on_engine_state,
+                        self.app._on_engine_log,
+                    )
+                    self.app.threads[r] = t.start()
                 self.profile_combo.append_text(r)
                 
             self.app.update_menu()
