@@ -4,7 +4,7 @@ import os
 import sys
 
 from PySide6.QtCore import QObject, Qt, QUrl, Signal
-from PySide6.QtGui import QCloseEvent, QDesktopServices
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QIcon
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QMainWindow, QPushButton, QStackedWidget, QToolButton, QVBoxLayout, QWidget
 
 from engine import RcloneEngine
@@ -86,11 +86,17 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout()
         layout.setSpacing(6)
         info = QToolButton(text="ⓘ")
+        info.setIcon(QIcon.fromTheme("dialog-information"))
+        info.setCursor(Qt.PointingHandCursor)
         info.setToolTip("Operating Environment Info")
         info.clicked.connect(self._show_environment_info)
         update = QToolButton(text="Update")
+        update.setIcon(QIcon.fromTheme("software-update-available"))
+        update.setCursor(Qt.PointingHandCursor)
         update.setToolTip("Update Rclone System-Wide")
         gui = QToolButton(text="Web GUI")
+        gui.setIcon(QIcon.fromTheme("web-browser"))
+        gui.setCursor(Qt.PointingHandCursor)
         gui.setToolTip("Launch official Rclone Web Configurator")
         layout.addWidget(info)
         layout.addWidget(update)
@@ -103,6 +109,7 @@ class MainWindow(QMainWindow):
         layout.setAlignment(Qt.AlignCenter)
         for label, index in (("Workbench", 0), ("Live Outputs", 1)):
             button = QToolButton(text=label, checkable=True)
+            button.setCursor(Qt.PointingHandCursor)
             button.setChecked(index == 0)
             button.clicked.connect(lambda _=False, target=index: self._select_page(target))
             layout.addWidget(button)
@@ -118,15 +125,21 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout()
         layout.setSpacing(6)
         self.btn_sync = QPushButton("▶")
+        self.btn_sync.setIcon(QIcon.fromTheme("media-playback-start"))
+        self.btn_sync.setCursor(Qt.PointingHandCursor)
         self.btn_sync.setObjectName("btn_sync")
         self.btn_sync.setToolTip("Start Active Profile Sync Session")
         self.btn_sync.clicked.connect(self._start_sync)
         self.btn_stop = QPushButton("■")
+        self.btn_stop.setIcon(QIcon.fromTheme("process-stop"))
+        self.btn_stop.setCursor(Qt.PointingHandCursor)
         self.btn_stop.setObjectName("btn_stop")
         self.btn_stop.setToolTip("Stop Active Sync Session")
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self._stop_sync)
         self.btn_trash = QToolButton(text="♻")
+        self.btn_trash.setIcon(QIcon.fromTheme("user-trash"))
+        self.btn_trash.setCursor(Qt.PointingHandCursor)
         self.btn_trash.setObjectName("btn_trash")
         self.btn_trash.setEnabled(False)
         self.btn_trash.clicked.connect(self._open_trash)
@@ -180,6 +193,7 @@ class MainWindow(QMainWindow):
         running = state in {"starting", "running"}
         self.btn_sync.setEnabled(not running)
         self.btn_stop.setEnabled(running)
+        self.workbench.set_locked(running)
         self.workbench.set_status(state.capitalize())
         self.tray.refresh()
 
@@ -196,6 +210,7 @@ class MainWindow(QMainWindow):
 
     def _start_sync(self):
         if engine := self._current_engine():
+            self._select_page(1)
             engine.trigger_sync()
 
     def _stop_sync(self):

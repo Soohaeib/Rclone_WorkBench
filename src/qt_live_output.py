@@ -2,11 +2,33 @@
 
 import os
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QDesktopServices, QFont
+from PySide6.QtCore import QRegularExpression, QUrl, Qt
+from PySide6.QtGui import QDesktopServices, QFont, QSyntaxHighlighter, QTextCharFormat, QIcon, QColor
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPlainTextEdit, QToolButton, QVBoxLayout, QWidget
 
 from src import workbench_blueprint
+
+
+class LogHighlighter(QSyntaxHighlighter):
+    def __init__(self, document):
+        super().__init__(document)
+        self.rules = []
+        for pattern, color in (
+            (r"\b\d+(?:\.\d+)?\b", "#f9e2af"),
+            (r"\b\d+(?:\.\d+)?(?:\s?)(?:B/s|KB/s|MB/s|GB/s|%|checks?|deletes?)\b", "#a6e3a1"),
+            (r"\b(INFO|NOTICE)\b", "#66d9ef"),
+            (r"\bERROR\b.*$", "#ff6b6b"),
+        ):
+            fmt = QTextCharFormat()
+            fmt.setForeground(QColor(color))
+            self.rules.append((QRegularExpression(pattern), fmt))
+
+    def highlightBlock(self, text):
+        for expression, fmt in self.rules:
+            match = expression.match(text)
+            while match.hasMatch():
+                self.setFormat(match.capturedStart(), match.capturedLength(), fmt)
+                match = expression.match(text, match.capturedEnd())
 
 
 class LiveOutputPage(QWidget):
@@ -15,8 +37,10 @@ class LiveOutputPage(QWidget):
         self.log_view = QPlainTextEdit(readOnly=True)
         self.log_view.setMaximumBlockCount(10000)
         self.log_view.setFont(QFont("monospace", 10))
+        self.highlighter = LogHighlighter(self.log_view.document())
         self.auto_scroll = QCheckBox("Auto-scroll")
         self.auto_scroll.setChecked(True)
+        self.auto_scroll.setCursor(Qt.PointingHandCursor)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 8, 16, 16)
@@ -37,6 +61,10 @@ class LiveOutputPage(QWidget):
     def _button(self, text, callback):
         button = QToolButton(text=text)
         button.setObjectName("log-header-btn")
+        button.setCursor(Qt.PointingHandCursor)
+        icons = {"Clear": "edit-clear", "Reload": "view-refresh", "Delete": "edit-delete", "Open Dir": "folder-open"}
+        if icons.get(text):
+            button.setIcon(QIcon.fromTheme(icons[text]))
         button.clicked.connect(callback)
         return button
 
