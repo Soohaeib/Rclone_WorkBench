@@ -1,7 +1,9 @@
 *.json
-*.pyc
 *.jsonl
 *.bak
-__pycache__/**
-.vscode/**
-.venv/**
+**/__pycache__/**
+**/.vscode/**
+**/.venv/**
+**/gtk_app/**
+**/qt_app/**
+**/logs/**

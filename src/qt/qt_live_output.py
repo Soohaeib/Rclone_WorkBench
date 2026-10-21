@@ -6,7 +6,7 @@ from PySide6.QtCore import QRegularExpression, QUrl, Qt
 from PySide6.QtGui import QDesktopServices, QFont, QSyntaxHighlighter, QTextCharFormat, QIcon, QColor
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPlainTextEdit, QToolButton, QVBoxLayout, QWidget
 
-from shared import workbench_blueprint
+from src.shared import workbench_blueprint
 
 
 class LogHighlighter(QSyntaxHighlighter):

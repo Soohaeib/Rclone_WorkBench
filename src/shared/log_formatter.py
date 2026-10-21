@@ -1,5 +1,5 @@
 import os, json, time, datetime, threading, re
-from shared.workbench_blueprint import LOG_DIR
+from .workbench_blueprint import LOG_DIR
 
 # Standard Rclone ANSI escape sequences to clean terminal colors
 ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')

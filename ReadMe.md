@@ -1,4 +1,4 @@
-# Rclone Workbench
+# Rclone Sentinel
 
 **Stop the "Bisync-Fear". A safety-first GUI workbench that audits your hardware, environment, and lock-states *before* running risky `rclone bisync` commands.**
 
@@ -13,7 +13,7 @@
 ## Why this exists
 While standard `rclone copy` or `rclone sync` is straightforward, **bidirectional synchronization (`bisync`) is inherently fragile and risky.** A crashed state, a stale lock file, or an empty local directory can trigger a catastrophic wipe of your cloud assets.
 
-**Rclone Workbench** acts as an opinionated structural safety layer. It wraps Rclone's complex CLI into a safe, strictly validated GTK3 desktop experience that physically prevents you from running dangerous commands without proper safety nets.
+**Rclone Sentinel** acts as an opinionated structural safety layer. It wraps Rclone's complex CLI into a safe, strictly validated GTK3 desktop experience that physically prevents you from running dangerous commands without proper safety nets.
 
 ## Key Features
 * **Pre-Run Environmental Audits:** Actively scans the local system before launching a sync. Blocks execution if it detects crashed states (`.lst-err`), stale locks, or empty paths.
@@ -42,7 +42,7 @@ cd Rclone_WorkBench
 pip install -r requirements.txt
 
 # 3. Launch the App (Runs in the System Tray)
-python3 app.py
+python3 gtk_sentinel.py
 ```
 
 *Note: The app will appear in your system tray. Click it to open the Inventory Workbench.*

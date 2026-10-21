@@ -3,10 +3,10 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 from urllib.parse import unquote
 
-from shared import config_manager, smart_engine
-from shared.engine import RcloneEngine
-from shared.workbench_blueprint import TRASH_LOCAL_NAME, RCLONE_CONF_PATH
-from gtk_app import widget_factory, ui_live_output, ui_inventory
+from src.shared import config_manager, smart_engine
+from src.shared.rclone_engine import RcloneEngine
+from src.shared.workbench_blueprint import TRASH_LOCAL_NAME, RCLONE_CONF_PATH
+from src.gtk import gtk_widget_factory as widget_factory, gtk_live_output, gtk_ui_inventory
 
 class InventoryWorkbench:
     def __init__(self, app):
@@ -18,7 +18,7 @@ class InventoryWorkbench:
         self._is_syncing_profile = False
         
         self.builder = Gtk.Builder()
-        self.builder.add_from_file(os.path.join(os.path.dirname(__file__), "workbench.glade"))
+        self.builder.add_from_file(os.path.join(os.path.dirname(__file__), "gtk_workbench.glade"))
         self.window = self.builder.get_object("main_window")
         self.main_stack = self.builder.get_object("main_stack")
         self.profile_combo = self.builder.get_object("profile_combo")
@@ -137,11 +137,11 @@ class InventoryWorkbench:
 
         # ==============================================================================
         # --- INITIALIZE SUB-COMPONENTS ---
-        self.output_panel = ui_live_output.LiveOutputPanel(self.remotes)
+        self.output_panel = gtk_live_output.LiveOutputPanel(self.remotes)
         self.output_panel.change_callback = self.sync_ui_to_log_tab
         self.builder.get_object("live_output_hook").pack_start(self.output_panel.container, True, True, 0)
 
-        self.inventory_panel = ui_inventory.InventoryPanel(self, self.builder)
+        self.inventory_panel = gtk_ui_inventory.InventoryPanel(self, self.builder)
         
         # Wire up combo and entry after panels are created
         self.profile_combo.connect("changed", self.on_profile_changed)

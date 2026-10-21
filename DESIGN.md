@@ -1,18 +1,20 @@
 # System Architecture & Design
 
-The GTK application remains the primary implementation in `app.py`. The Qt
-frontend is an additive alternative launched through `pyside_app.py`; neither
-frontend replaces or imports the other.
+The GTK application remains the primary implementation in `gtk_sentinel.py`.
+The Qt frontend is an additive alternative launched through `qt_sentinel.py`;
+neither frontend replaces or imports the other.
 
 The Workbench operates as a multi-layered ecosystem where data, logic, and execution are strictly decoupled. This allows developers to easily add new rclone flags without ever touching the UI code.
 
 ## Core Modules
 
-* **`shared/`** (*Frontend-neutral logic*): Contains the schema, configuration, rules, audits, log parser, process adapter, and `RcloneEngine`. It imports neither GTK nor Qt.
-* **`gtk_app/`** (*GTK Front End*): Contains the original GTK controller, Glade panels, widget factory, and `workbench.glade` asset.
-* **`qt_app/`** (*Qt Front End*): Contains the PySide6 window components, tray controller, and QSS stylesheet.
-* **`app.py`** (*GTK Entry Point*): Loads only `gtk_app` and `shared`.
-* **`pyside_app.py`** (*Qt Entry Point*): Loads only `qt_app` and `shared`.
+* **`src/shared/`** (*Frontend-neutral logic*): Contains the schema, configuration, rules, audits, log parser, process adapter, and `rclone_engine.py`. It imports neither GTK nor Qt.
+* **`src/gtk/`** (*GTK Front End*): Contains matching `gtk_*` controllers, the Glade panel asset, and the original GTK behavior.
+* **`src/qt/`** (*Qt Front End*): Contains matching `qt_*` components, the tray controller, and QSS stylesheet.
+* **`src/qt/qt_widget_factory.py`** (*Qt Widget Factory*): Creates inventory chips and canvas rows and centralizes Qt lock/value handling.
+* **`src/qt/qt_ui_inventory.py`** (*Qt Inventory Controller*): Owns Smart Automations, rules evaluation, persistence, and command preview state for the Qt shell.
+* **`src/gtk/gtk_sentinel.py`** (*GTK Entry Point*): Loads only `src.gtk` and `src.shared`.
+* **`src/qt/qt_sentinel.py`** (*Qt Entry Point*): Loads only `src.qt` and `src.shared`.
 
 ---
 

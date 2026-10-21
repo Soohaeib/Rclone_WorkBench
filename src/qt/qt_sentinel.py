@@ -1,4 +1,4 @@
-"""PySide6 entry point for the Rclone Workbench."""
+"""PySide6 entry point for Rclone Sentinel."""
 
 import os
 import shutil
@@ -9,15 +9,15 @@ from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QIcon
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QMainWindow, QPushButton, QStackedWidget, QToolButton, QVBoxLayout, QWidget
 
-from shared.engine import RcloneEngine
-from shared import config_manager
-from qt_app.qt_live_output import LiveOutputPage
-from qt_app.qt_tray import TrayController
-from qt_app.qt_workbench_ui import WorkbenchPage
+from src.shared.rclone_engine import RcloneEngine
+from src.shared import config_manager
+from src.qt.qt_live_output import LiveOutputPage
+from src.qt.qt_tray import TrayController
+from src.qt.qt_workbench_ui import WorkbenchPage
 
 
 def load_stylesheet():
-    stylesheet_path = os.path.join(os.path.dirname(__file__), "qt_app", "style.qss")
+    stylesheet_path = os.path.join(os.path.dirname(__file__), "qt_style.qss")
     with open(stylesheet_path, encoding="utf-8") as stylesheet:
         return stylesheet.read()
 
@@ -30,7 +30,7 @@ class EngineEvents(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("RClone Workbench")
+        self.setWindowTitle("Rclone Sentinel")
         self.resize(1200, 800)
         self._engines = {}
 

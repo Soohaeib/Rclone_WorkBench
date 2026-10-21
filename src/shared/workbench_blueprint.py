@@ -190,7 +190,7 @@ GLOBAL_SCHEMA = {
     ]
 }
 
-# Aggregate them into CONFIG_SCHEMA to maintain complete downstream compatibility.
+# Aggregate the category schemas for consumers that need the complete inventory.
 CONFIG_SCHEMA = {}
 for schema in (BISYNC_SCHEMA, GLOBAL_SCHEMA):
     for cat, items in schema.items():

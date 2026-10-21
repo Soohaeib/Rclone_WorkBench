@@ -7,7 +7,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from shared import config_manager, workbench_blueprint
+from src.shared import config_manager, workbench_blueprint
 
 
 class TrayController:
@@ -117,7 +117,7 @@ class TrayController:
         profile = self.current_profile()
         engine = self.engines.get(profile)
         state = "Running" if engine and engine.run_state else "Ready"
-        self.tray.setToolTip(f"{profile or 'Rclone Workbench'}: {state}")
+        self.tray.setToolTip(f"{profile or 'Rclone Sentinel'}: {state}")
 
     def hide(self):
         self.tray.hide()

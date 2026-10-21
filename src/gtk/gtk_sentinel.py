@@ -1,4 +1,4 @@
-#usr/bin/env python3
+#!/usr/bin/env python3
 import configparser
 import datetime
 import os
@@ -13,13 +13,12 @@ gi.require_version("AyatanaAppIndicator3", "0.1")
 gi.require_version("Notify", "0.7")
 from gi.repository import AyatanaAppIndicator3 as AppIndicator3, Gtk, Notify, GLib
 
-from shared.engine import RcloneEngine
-from shared import config_manager, workbench_blueprint
-from shared import log_formatter
-from gtk_app import workbench_ui
+from src.shared.rclone_engine import RcloneEngine
+from src.shared import config_manager, workbench_blueprint, log_formatter
+from src.gtk import gtk_workbench_ui
 
 
-Notify.init("RClone Workbench")
+Notify.init("Rclone Sentinel")
 
 
 def notify(title, message, err=False):
@@ -28,7 +27,7 @@ def notify(title, message, err=False):
     ).show()
 
 
-class RCloneWorkbenchApp:
+class RcloneSentinelApp:
     def __init__(self):
         signal.signal(signal.SIGINT, signal.SIG_DFL)
         self.threads, self.workbench = {}, None
@@ -182,7 +181,7 @@ class RCloneWorkbenchApp:
 
     def open_workbench(self):
         if not self.workbench:
-            self.workbench = workbench_ui.InventoryWorkbench(self)
+            self.workbench = gtk_workbench_ui.InventoryWorkbench(self)
         self.workbench.focus_workbench()
         self.workbench.show_all()
         self.workbench.present()
@@ -200,6 +199,10 @@ class RCloneWorkbenchApp:
         Gtk.main_quit()
 
 
-if __name__ == "__main__":
-    RCloneWorkbenchApp()
+def main():
+    RcloneSentinelApp()
     Gtk.main()
+
+
+if __name__ == "__main__":
+    main()
